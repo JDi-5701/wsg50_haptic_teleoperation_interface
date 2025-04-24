@@ -1,0 +1,3 @@
+[submodule "src/kuka_noetic_ws_with_impedence"]
+	path = src/kuka_noetic_ws_with_impedence
+	url = https://git.fortiss.org/robotics/students/fuxiangyu/kuka_noetic_ws_with_impedence.git

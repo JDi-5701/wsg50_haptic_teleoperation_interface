@@ -1,0 +1,43 @@
+cmake_minimum_required(VERSION 3.8)
+project(wsg_teleoperation_interface)
+
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+# Find dependencies
+find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_python REQUIRED)
+find_package(rclpy REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
+find_package(tf2_ros REQUIRED)
+
+# Install Python package
+ament_python_install_package(${PROJECT_NAME})
+
+# Install Python scripts
+install(PROGRAMS
+  wsg_teleoperation_interface/udp_ros_bridge_force_sensor.py
+  wsg_teleoperation_interface/knob_force_feedback_controller_wsg50.py
+  wsg_teleoperation_interface/udp_ros_bridge.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+# Install launch files
+install(DIRECTORY
+  launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
+
+ament_export_dependencies(rosidl_default_runtime)
+
+
+if(BUILD_TESTING)
+  find_package(ament_lint_auto REQUIRED)
+  ament_lint_auto_find_test_dependencies()
+endif()
+
+ament_package()
