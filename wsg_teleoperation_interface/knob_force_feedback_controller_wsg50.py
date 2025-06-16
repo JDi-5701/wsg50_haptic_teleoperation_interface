@@ -64,7 +64,7 @@ class WSG50TeleoperationInterface(Node):
         
         self.force_sub = self.create_subscription(
             Float32,
-            '/gripper_finger_force',
+            '/gripper_finger_force_old',
             self.force_callback,
             10
         )
@@ -134,7 +134,7 @@ class WSG50TeleoperationInterface(Node):
         # Publish force feedback
         force_msg = Float32()
         force_msg.data = float(-1 * force_feedback)
-        self.knob_force_pub.publish(force_msg)
+        #self.knob_force_pub.publish(force_msg)
         self.get_logger().debug(f'Force feedback: {force_feedback:.2f} N')
     
     def control_loop(self):

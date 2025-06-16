@@ -11,11 +11,11 @@ def generate_launch_description():
     wsg50_package_dir = get_package_share_directory('wsg50_ros_driver')
     
     # Include the force sensor bridge launch file
-    force_sensor_bridge = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(package_dir, 'launch', 'esp32_force_sensor.launch.py')
-        )
-    )
+    # force_sensor_bridge = IncludeLaunchDescription(
+    #     PythonLaunchDescriptionSource(
+    #         os.path.join(package_dir, 'launch', 'esp32_force_sensor.launch.py')
+    #     )
+    # )
     
     # Include the knob bridge launch file
     knob_bridge = IncludeLaunchDescription(
@@ -39,7 +39,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        force_sensor_bridge,
+        #force_sensor_bridge,
         knob_bridge,
         teleoperation_interface,
         wsg50_node,
