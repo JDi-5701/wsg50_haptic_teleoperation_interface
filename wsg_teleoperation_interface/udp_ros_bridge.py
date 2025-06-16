@@ -51,6 +51,7 @@ class UdpKnobBridge(Node):
         
         # ROS Publishers and Subscribers
         self.knob_state_pub = self.create_publisher(Int32, 'knob_state', 10)
+        self.knob_torque_pub = self.create_publisher(Float32, 'knob_torque', 10)
         self.get_logger().info("Created publisher for topic 'knob_state'")
         
         # Create subscription with absolute topic name to match the publisher
@@ -66,6 +67,9 @@ class UdpKnobBridge(Node):
         self.knob_state_msg = Int32()
         self.knob_state_msg.data = 0
 
+        self.knob_torque_msg = Float32()
+        self.knob_torque_msg.data = 0.0
+
         # Flag to control the UDP thread
         self.running = True
 
@@ -79,6 +83,7 @@ class UdpKnobBridge(Node):
             # Create a message with force value from ROS topic
             message = struct.pack('f', msg.data)  # 'f' for float
             self.sock.sendto(message, self.esp32_address)
+            #time.sleep(0.1)
             #self.get_logger().info(f'Sent Force to ESP32: {msg.data:.2f}')
         except Exception as e:
             self.get_logger().error(f"Error sending message: {e}")
@@ -113,13 +118,19 @@ class UdpKnobBridge(Node):
                             self.last_rate_print_time = current_time
                         
                         # Unpack the received data (position as int32)
-                        position = struct.unpack('i', data)[0]  # 'i' for int32
+                        #position = struct.unpack('i', data)[0]  # 'i' for int32
+                        position = struct.unpack('<i', data[0:4])[0]  # 'i' for int32
+                        torque = struct.unpack('<f', data[4:8])[0]
                         #self.get_logger().info(f'Received Knob Position: {position}')
 
                         # Rate limit publishing
                         if current_time - self.last_publish_time >= self.min_publish_interval:
                             self.knob_state_msg.data = position
                             self.knob_state_pub.publish(self.knob_state_msg)
+
+                            self.knob_torque_msg.data = torque
+                            self.knob_torque_pub.publish(self.knob_torque_msg)
+
                             self.last_publish_time = current_time
                     else:
                         self.get_logger().debug(f"Ignoring message from {addr[0]}")

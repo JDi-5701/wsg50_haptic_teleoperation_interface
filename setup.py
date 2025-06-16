@@ -27,6 +27,7 @@ setup(
             'knob_force_feedback_controller_wsg50 = wsg_teleoperation_interface.knob_force_feedback_controller_wsg50:main',
             'udp_ros_bridge_force_sensor = wsg_teleoperation_interface.udp_ros_bridge_force_sensor:main',
             'udp_ros_bridge = wsg_teleoperation_interface.udp_ros_bridge:main',
+            'udp_ros_bridge_imu = wsg_teleoperation_interface.udp_ros_bridge_imu:main',
         ],
     },
 )

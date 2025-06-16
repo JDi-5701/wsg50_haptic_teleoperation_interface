@@ -22,6 +22,7 @@ install(PROGRAMS
   wsg_teleoperation_interface/udp_ros_bridge_force_sensor.py
   wsg_teleoperation_interface/knob_force_feedback_controller_wsg50.py
   wsg_teleoperation_interface/udp_ros_bridge.py
+  wsg_teleoperation_interface/udp_ros_bridge_imu.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
