@@ -37,8 +37,8 @@ class WSG50TeleoperationInterface(Node):
         
         # Create publishers and subscribers
         self.gripper_command_pub = self.create_publisher(
-            Float32, 
-            'human_command_gripper_position', 
+            GripperCommand, 
+            '/wsg50/command/move', 
             10
         )
         
@@ -154,9 +154,10 @@ class WSG50TeleoperationInterface(Node):
         #self.gripper_position_target_compliant = self.gripper_position_target + gripper_compliance_parameter * max(self.gripper_force-0.4, 0.0)
         
         # Create and publish gripper command
-        gripper_cmd = Float32()
-        gripper_cmd.data = self.gripper_position_target
-        #gripper_cmd.velocity = self.get_parameter('gripper_velocity').value
+
+        gripper_cmd = GripperCommand()
+        gripper_cmd.position = self.gripper_position_target
+        gripper_cmd.velocity = self.get_parameter('gripper_velocity').value
         self.gripper_command_pub.publish(gripper_cmd)
         
         # Log position changes
