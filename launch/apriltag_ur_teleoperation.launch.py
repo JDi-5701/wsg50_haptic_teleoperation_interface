@@ -19,24 +19,37 @@ def generate_launch_description():
                     'rs_launch.py'
                 )
             ]),
+            # launch_arguments={
+            #     'enable_color': 'true',
+            #     'rgb_camera.color_profile': '640,480,30',
+            #     'rgb_camera.color_format': 'RGB8',
+            #     'enable_depth': 'false',
+            #     # 'depth_module.depth_profile': '640,480,15',
+            #     # 'depth_module.depth_format': 'Z16',
+            #     # 'align_depth.enable': 'true',
+            #     'enable_depth': 'false',
+            #     'enable_infra1': 'false',
+            #     'enable_infra2': 'false',
+            #     'emitter_enabled': 'false',
+            # }.items(),
             launch_arguments={
                 'enable_color': 'true',
-                'rgb_camera.color_profile': '640,480,15',
+                'rgb_camera.color_profile': '640,480,30',
                 'rgb_camera.color_format': 'RGB8',
-                'enable_depth': 'true',
-                'depth_module.depth_profile': '640,480,15',
-                'depth_module.depth_format': 'Z16',
-                'align_depth.enable': 'true',
+                'enable_depth': 'false',
+                'enable_infra1': 'false',
+                'enable_infra2': 'false',
+                'emitter_enabled': 'false',
             }.items(),
         ),
 
-        # # === 启动你的 apriltag 节点 ===
-        # Node(
-        #     package='wsg_teleoperation_interface',
-        #     executable='apriltag_ur_teleoperation_node.py',
-        #     name='apriltag_ur_teleoperation_node',
-        #     output='screen'
-        # ),
+        # === 启动你的 apriltag 节点 ===
+        Node(
+            package='wsg_teleoperation_interface',
+            executable='apriltag_ur_teleoperation_node.py',
+            name='apriltag_ur_teleoperation_node',
+            output='screen'
+        ),
 
         # === 添加 world → camera_link 的静态变换 ===
         Node(

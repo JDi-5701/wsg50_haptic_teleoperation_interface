@@ -17,7 +17,7 @@ class ApriltagTeleoperationNode(Node):
         self.last_target_pose = None
         self.last_poly_pose = None  # <-- [ADDED] For incremental delta computation
         self.alpha = 0.15
-        self.max_delta_position = 0.10
+        self.max_delta_position = 0.2
         self.max_delta_angle = 0.35
 
         self.tf_buffer = Buffer()
@@ -57,22 +57,10 @@ class ApriltagTeleoperationNode(Node):
         if self.current_tcp_pose is None:
             return
 
-        # 初始化累计目标，只做一次
-        if not hasattr(self, 'goal_pose') or self.goal_pose is None:
-            self.goal_pose = PoseStamped()
-            self.goal_pose.header = self.current_tcp_pose.header
-            self.goal_pose.pose.position.x = self.current_tcp_pose.pose.position.x
-            self.goal_pose.pose.position.y = self.current_tcp_pose.pose.position.y
-            self.goal_pose.pose.position.z = self.current_tcp_pose.pose.position.z
-            self.goal_pose.pose.orientation.x = self.current_tcp_pose.pose.orientation.x
-            self.goal_pose.pose.orientation.y = self.current_tcp_pose.pose.orientation.y
-            self.goal_pose.pose.orientation.z = self.current_tcp_pose.pose.orientation.z
-            self.goal_pose.pose.orientation.w = self.current_tcp_pose.pose.orientation.w
-
         try:
-            tf = self.tf_buffer.lookup_transform('base', 'poly', rclpy.time.Time())
+            tf = self.tf_buffer.lookup_transform('workspace_middle', 'poly', rclpy.time.Time())
         except Exception as e:
-            self.get_logger().warn(f'No tf from base to poly: {e}')
+            self.get_logger().warn(f'No tf from workspace_middle to poly: {e}')
             return
 
         virtual_pose = PoseStamped()
@@ -87,11 +75,47 @@ class ApriltagTeleoperationNode(Node):
         virtual_pose.pose.orientation.w = 1.0
 
         try:
-            poly_in_base = manual_transform_pose(virtual_pose, tf)
+            # === 类型检查 start ===
+            #self.get_logger().info(f"[CHECK] virtual_pose: {type(virtual_pose)} | has .pose: {'pose' in dir(virtual_pose)} | .pose type: {type(getattr(virtual_pose, 'pose', None))}")
+            #self.get_logger().info(f"[CHECK] tf: {type(tf)} | has .transform: {'transform' in dir(tf)}")
+            #self.get_logger().info(f"[CHECK] virtual_pose as dict: {vars(virtual_pose) if hasattr(virtual_pose, '__dict__') else str(virtual_pose)}")
+            # === 类型检查 end ===
+            poly_in_base = manual_transform_pose(virtual_pose, tf)  # <--- 替换为自定义变换函数
         except Exception as e:
             self.get_logger().warn(f'do_transform_pose failed: {e}')
             return
 
+        ignore_frame = False
+        if self.last_target_pose is not None:
+            dist = self.pose_distance(
+                poly_in_base.pose.position,
+                self.last_target_pose.pose.position
+            )
+            q1 = [
+                poly_in_base.pose.orientation.x,
+                poly_in_base.pose.orientation.y,
+                poly_in_base.pose.orientation.z,
+                poly_in_base.pose.orientation.w,
+            ]
+            q2 = [
+                self.last_target_pose.pose.orientation.x,
+                self.last_target_pose.pose.orientation.y,
+                self.last_target_pose.pose.orientation.z,
+                self.last_target_pose.pose.orientation.w,
+            ]
+            angle = self.quaternion_distance(q1, q2)
+            if dist > self.max_delta_position or angle > self.max_delta_angle:
+                ignore_frame = True
+                self.get_logger().warn(
+                    f'Poly pose jump detected: Δpos={dist:.3f}m, Δrot={math.degrees(angle):.1f}°; skip this frame.'
+                )
+
+        self.last_target_pose = poly_in_base
+
+        if ignore_frame:
+            return
+
+        # <-- [ADDED] Prevent use of uninitialized last_poly_pose
         if self.last_poly_pose is None:
             self.last_poly_pose = poly_in_base
             return
@@ -106,26 +130,32 @@ class ApriltagTeleoperationNode(Node):
         # ==== 增量姿态 ====
         def quat_list(msg):
             return [msg.x, msg.y, msg.z, msg.w]
-        goal_q = quat_list(self.goal_pose.pose.orientation)
+        current_q = quat_list(self.current_tcp_pose.pose.orientation)
         poly_q = quat_list(poly_in_base.pose.orientation)
         last_poly_q = quat_list(self.last_poly_pose.pose.orientation)
         last_poly_q_inv = tf_transformations.quaternion_inverse(last_poly_q)
         delta_q = tf_transformations.quaternion_multiply(poly_q, last_poly_q_inv)
-        goal_q_new = tf_transformations.quaternion_multiply(delta_q, goal_q)
+        target_q = tf_transformations.quaternion_multiply(delta_q, current_q)
 
-        # == 累加到 goal_pose（不依赖 current_tcp_pose，仅初始化用）==
-        self.goal_pose.pose.position.x += delta_pos[0]
-        self.goal_pose.pose.position.y += delta_pos[1]
-        self.goal_pose.pose.position.z += delta_pos[2]
-        self.goal_pose.pose.orientation.x = goal_q_new[0]
-        self.goal_pose.pose.orientation.y = goal_q_new[1]
-        self.goal_pose.pose.orientation.z = goal_q_new[2]
-        self.goal_pose.pose.orientation.w = goal_q_new[3]
-        self.goal_pose.header.stamp = self.get_clock().now().to_msg()
-        self.goal_pose.header.frame_id = self.current_tcp_pose.header.frame_id
+        target = PoseStamped()
+        target.header.stamp = self.get_clock().now().to_msg()
+        target.header.frame_id = self.current_tcp_pose.header.frame_id
+        target.pose.position.x = self.current_tcp_pose.pose.position.x + delta_pos[0]
+        target.pose.position.y = self.current_tcp_pose.pose.position.y + delta_pos[1]
+        target.pose.position.z = self.current_tcp_pose.pose.position.z + delta_pos[2]
+        target.pose.orientation.x = target_q[0]
+        target.pose.orientation.y = target_q[1]
+        target.pose.orientation.z = target_q[2]
+        target.pose.orientation.w = target_q[3]
 
-        self.target_publisher.publish(self.goal_pose)
-        self.last_poly_pose = poly_in_base
+        self.target_publisher.publish(target)
+        self.last_poly_pose = poly_in_base  # <-- [ADDED] Update for next delta computation
+
+        delta_norm = math.sqrt(sum([d*d for d in delta_pos]))
+        delta_angle = 2 * math.acos(min(1.0, abs(delta_q[3])))
+        print(f"Δpos: x={delta_pos[0]:.6f}, y={delta_pos[1]:.6f}, z={delta_pos[2]:.6f}, norm={delta_norm:.8f}")
+        print(f"Δquat: x={delta_q[0]:.6f}, y={delta_q[1]:.6f}, z={delta_q[2]:.6f}, w={delta_q[3]:.6f}, angle={math.degrees(delta_angle):.8f}°")
+
 
     def align_to_apriltag(self):
         try:
