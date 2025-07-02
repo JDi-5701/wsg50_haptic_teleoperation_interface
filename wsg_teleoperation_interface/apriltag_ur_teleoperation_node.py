@@ -8,7 +8,7 @@ import tf_transformations  # 替换 tf2_geometry_msgs
 import math
 
 class ApriltagTeleoperationNode(Node):
-    def __init__(self):
+    def __init__(self, use_absolute_pose=False):
         super().__init__('apriltag_teleoperation_node')
         self.get_logger().info('Apriltag Teleoperation Node Started')
 
@@ -19,6 +19,8 @@ class ApriltagTeleoperationNode(Node):
         self.alpha = 0.15
         self.max_delta_position = 0.40
         self.max_delta_angle = 0.35
+        self.use_absolute_pose = use_absolute_pose  # <--- 新增，选择模式
+        self.start_tcp_pose = None  # <--- 新增，绝对模式参考
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -91,46 +93,63 @@ class ApriltagTeleoperationNode(Node):
             self.get_logger().warn(f'do_transform_pose failed: {e}')
             return
 
+        # ========== 跳变安全检测 ========== #
+        if self.last_poly_pose is not None:
+            jump_pos = self.pose_distance(
+                poly_in_base.pose.position,
+                self.last_poly_pose.pose.position
+            )
+            jump_ori = self.quaternion_distance(
+                [poly_in_base.pose.orientation.x, poly_in_base.pose.orientation.y, poly_in_base.pose.orientation.z, poly_in_base.pose.orientation.w],
+                [self.last_poly_pose.pose.orientation.x, self.last_poly_pose.pose.orientation.y, self.last_poly_pose.pose.orientation.z, self.last_poly_pose.pose.orientation.w]
+            )
+            if jump_pos > self.max_delta_position or jump_ori > self.max_delta_angle:
+                self.get_logger().warn(f'TF jump detected: Δpos={jump_pos:.3f}, Δori={jump_ori:.3f}, skipping frame')
+                return
+
         if self.last_poly_pose is None:
             self.last_poly_pose = poly_in_base
-            self.initial_poly_pose = poly_in_base  # <--- 新增，只在首次保存
+            self.initial_poly_pose = poly_in_base  # 只在首次保存
+            self.start_tcp_pose = self.current_tcp_pose  # 绝对模式参考
             return
 
         # =============== 新增 delta pose 计算 ===============
         poly_pose_current = get_delta_pose(self.initial_poly_pose, poly_in_base)
         poly_pose_last = get_delta_pose(self.initial_poly_pose, self.last_poly_pose)
-        # 可在此处使用 delta_pose_current 和 delta_pose_last
-        # self.get_logger().info(f"Delta (current): {delta_pose_current}")
-        # self.get_logger().info(f"Delta (last): {delta_pose_last}")
-        # =============== 原有逻辑保持不变 ===============
 
-        # ==== 增量位置 ====
-        delta_pos = [
-            poly_pose_current.pose.position.x - poly_pose_last.pose.position.x,
-            poly_pose_current.pose.position.y - poly_pose_last.pose.position.y,
-            poly_pose_current.pose.position.z - poly_pose_last.pose.position.z,
-        ]
+        if self.use_absolute_pose:
+            # 绝对模式：每帧 goal_pose 直接 = 初始tcp_pose 叠加 poly_pose_current
+            self.goal_pose = apply_delta_to_pose(self.start_tcp_pose, poly_pose_current)
+            self.goal_pose.header.stamp = self.get_clock().now().to_msg()
+            self.goal_pose.header.frame_id = self.current_tcp_pose.header.frame_id
+        else:
+            # ==== 增量位置 ====
+            delta_pos = [
+                poly_pose_current.pose.position.x - poly_pose_last.pose.position.x,
+                poly_pose_current.pose.position.y - poly_pose_last.pose.position.y,
+                poly_pose_current.pose.position.z - poly_pose_last.pose.position.z,
+            ]
 
-        # ==== 增量姿态 ====
-        def quat_list(msg):
-            return [msg.x, msg.y, msg.z, msg.w]
-        goal_q = quat_list(self.goal_pose.pose.orientation)
-        poly_q = quat_list(poly_pose_current.pose.orientation)
-        last_poly_q = quat_list(poly_pose_last.pose.orientation)
-        last_poly_q_inv = tf_transformations.quaternion_inverse(last_poly_q)
-        delta_q = tf_transformations.quaternion_multiply(poly_q, last_poly_q_inv)
-        goal_q_new = tf_transformations.quaternion_multiply(delta_q, goal_q)
+            # ==== 增量姿态 ====
+            def quat_list(msg):
+                return [msg.x, msg.y, msg.z, msg.w]
+            goal_q = quat_list(self.goal_pose.pose.orientation)
+            poly_q = quat_list(poly_pose_current.pose.orientation)
+            last_poly_q = quat_list(poly_pose_last.pose.orientation)
+            last_poly_q_inv = tf_transformations.quaternion_inverse(last_poly_q)
+            delta_q = tf_transformations.quaternion_multiply(poly_q, last_poly_q_inv)
+            goal_q_new = tf_transformations.quaternion_multiply(delta_q, goal_q)
 
-        # == 累加到 goal_pose（不依赖 current_tcp_pose，仅初始化用）==
-        self.goal_pose.pose.position.x += delta_pos[0]
-        self.goal_pose.pose.position.y += delta_pos[1]
-        self.goal_pose.pose.position.z += delta_pos[2]
-        self.goal_pose.pose.orientation.x = goal_q_new[0]
-        self.goal_pose.pose.orientation.y = goal_q_new[1]
-        self.goal_pose.pose.orientation.z = goal_q_new[2]
-        self.goal_pose.pose.orientation.w = goal_q_new[3]
-        self.goal_pose.header.stamp = self.get_clock().now().to_msg()
-        self.goal_pose.header.frame_id = self.current_tcp_pose.header.frame_id
+            # == 累加到 goal_pose（不依赖 current_tcp_pose，仅初始化用）==
+            self.goal_pose.pose.position.x += delta_pos[0]
+            self.goal_pose.pose.position.y += delta_pos[1]
+            self.goal_pose.pose.position.z += delta_pos[2]
+            self.goal_pose.pose.orientation.x = goal_q_new[0]
+            self.goal_pose.pose.orientation.y = goal_q_new[1]
+            self.goal_pose.pose.orientation.z = goal_q_new[2]
+            self.goal_pose.pose.orientation.w = goal_q_new[3]
+            self.goal_pose.header.stamp = self.get_clock().now().to_msg()
+            self.goal_pose.header.frame_id = self.current_tcp_pose.header.frame_id
 
         self.target_publisher.publish(self.goal_pose)
         self.last_poly_pose = poly_in_base
@@ -184,6 +203,38 @@ def get_delta_pose(pose_A, pose_B):
     return res
 # ===== end =====
 
+# ===== 新增 base pose 叠加 delta 的函数 =====
+def apply_delta_to_pose(pose_base, delta_pose):
+    """
+    输入: pose_base (PoseStamped), delta_pose (PoseStamped)
+    返回: pose_base 在 SE(3) 上右乘 delta_pose 后的新 PoseStamped
+    """
+    q_base = [pose_base.pose.orientation.x, pose_base.pose.orientation.y, pose_base.pose.orientation.z, pose_base.pose.orientation.w]
+    t_base = [pose_base.pose.position.x, pose_base.pose.position.y, pose_base.pose.position.z]
+    m_base = tf_transformations.quaternion_matrix(q_base)
+    m_base[0:3, 3] = t_base
+
+    q_delta = [delta_pose.pose.orientation.x, delta_pose.pose.orientation.y, delta_pose.pose.orientation.z, delta_pose.pose.orientation.w]
+    t_delta = [delta_pose.pose.position.x, delta_pose.pose.position.y, delta_pose.pose.position.z]
+    m_delta = tf_transformations.quaternion_matrix(q_delta)
+    m_delta[0:3, 3] = t_delta
+
+    m_new = m_base @ m_delta
+    new_pos = m_new[0:3, 3]
+    new_quat = tf_transformations.quaternion_from_matrix(m_new)
+
+    res = PoseStamped()
+    res.header = pose_base.header
+    res.pose.position.x = new_pos[0]
+    res.pose.position.y = new_pos[1]
+    res.pose.position.z = new_pos[2]
+    res.pose.orientation.x = new_quat[0]
+    res.pose.orientation.y = new_quat[1]
+    res.pose.orientation.z = new_quat[2]
+    res.pose.orientation.w = new_quat[3]
+    return res
+# ===== end =====
+
 # ===== 自定义 pose 变换函数 start =====
 def manual_transform_pose(pose_stamped, transform_stamped):
     t = transform_stamped.transform.translation
@@ -222,7 +273,8 @@ def manual_transform_pose(pose_stamped, transform_stamped):
 
 def main():
     rclpy.init()
-    node = ApriltagTeleoperationNode()
+    # 可根据需要更改参数，True 为绝对模式，False 为增量累加模式
+    node = ApriltagTeleoperationNode(use_absolute_pose=False)
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
