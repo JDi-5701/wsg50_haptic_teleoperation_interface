@@ -5,7 +5,6 @@ from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from tf2_ros import Buffer, TransformListener
 import tf_transformations  # 替换 tf2_geometry_msgs
-# from tf2_geometry_msgs import do_transform_pose
 import math
 
 class ApriltagTeleoperationNode(Node):
@@ -15,9 +14,10 @@ class ApriltagTeleoperationNode(Node):
 
         self.current_tcp_pose = None
         self.last_target_pose = None
-        self.last_poly_pose = None  # <-- [ADDED] For incremental delta computation
+        self.last_poly_pose = None
+        self.initial_poly_pose = None  # <--- 新增
         self.alpha = 0.15
-        self.max_delta_position = 0.10
+        self.max_delta_position = 0.40
         self.max_delta_angle = 0.35
 
         self.tf_buffer = Buffer()
@@ -32,7 +32,7 @@ class ApriltagTeleoperationNode(Node):
 
         self.target_publisher = self.create_publisher(
             PoseStamped,
-            '/cartesian_compliance_controller/target_frame',
+            '/cartesian_compliance_controller/safe_interface_frame',
             10
         )
 
@@ -57,7 +57,6 @@ class ApriltagTeleoperationNode(Node):
         if self.current_tcp_pose is None:
             return
 
-        # 初始化累计目标，只做一次
         if not hasattr(self, 'goal_pose') or self.goal_pose is None:
             self.goal_pose = PoseStamped()
             self.goal_pose.header = self.current_tcp_pose.header
@@ -70,7 +69,7 @@ class ApriltagTeleoperationNode(Node):
             self.goal_pose.pose.orientation.w = self.current_tcp_pose.pose.orientation.w
 
         try:
-            tf = self.tf_buffer.lookup_transform('base', 'poly', rclpy.time.Time())
+            tf = self.tf_buffer.lookup_transform('usb_cam', 'poly', rclpy.time.Time())
         except Exception as e:
             self.get_logger().warn(f'No tf from base to poly: {e}')
             return
@@ -94,21 +93,30 @@ class ApriltagTeleoperationNode(Node):
 
         if self.last_poly_pose is None:
             self.last_poly_pose = poly_in_base
+            self.initial_poly_pose = poly_in_base  # <--- 新增，只在首次保存
             return
+
+        # =============== 新增 delta pose 计算 ===============
+        poly_pose_current = get_delta_pose(self.initial_poly_pose, poly_in_base)
+        poly_pose_last = get_delta_pose(self.initial_poly_pose, self.last_poly_pose)
+        # 可在此处使用 delta_pose_current 和 delta_pose_last
+        # self.get_logger().info(f"Delta (current): {delta_pose_current}")
+        # self.get_logger().info(f"Delta (last): {delta_pose_last}")
+        # =============== 原有逻辑保持不变 ===============
 
         # ==== 增量位置 ====
         delta_pos = [
-            poly_in_base.pose.position.x - self.last_poly_pose.pose.position.x,
-            poly_in_base.pose.position.y - self.last_poly_pose.pose.position.y,
-            poly_in_base.pose.position.z - self.last_poly_pose.pose.position.z,
+            poly_pose_current.pose.position.x - poly_pose_last.pose.position.x,
+            poly_pose_current.pose.position.y - poly_pose_last.pose.position.y,
+            poly_pose_current.pose.position.z - poly_pose_last.pose.position.z,
         ]
 
         # ==== 增量姿态 ====
         def quat_list(msg):
             return [msg.x, msg.y, msg.z, msg.w]
         goal_q = quat_list(self.goal_pose.pose.orientation)
-        poly_q = quat_list(poly_in_base.pose.orientation)
-        last_poly_q = quat_list(self.last_poly_pose.pose.orientation)
+        poly_q = quat_list(poly_pose_current.pose.orientation)
+        last_poly_q = quat_list(poly_pose_last.pose.orientation)
         last_poly_q_inv = tf_transformations.quaternion_inverse(last_poly_q)
         delta_q = tf_transformations.quaternion_multiply(poly_q, last_poly_q_inv)
         goal_q_new = tf_transformations.quaternion_multiply(delta_q, goal_q)
@@ -140,12 +148,41 @@ class ApriltagTeleoperationNode(Node):
             virtual_pose.pose.orientation.y = 0.0
             virtual_pose.pose.orientation.z = 0.0
             virtual_pose.pose.orientation.w = 1.0
-            aligned_pose = manual_transform_pose(virtual_pose, tf)  # <--- 替换为自定义变换函数
+            aligned_pose = manual_transform_pose(virtual_pose, tf)
             aligned_pose.header.stamp = self.get_clock().now().to_msg()
             self.target_publisher.publish(aligned_pose)
             self.get_logger().info('Aligned to apriltag pose.')
         except Exception as e:
             self.get_logger().warn(f'Failed to align to apriltag: {e}')
+
+# ===== 新增 delta pose 计算函数 =====
+def get_delta_pose(pose_A, pose_B):
+    """
+    返回 pose_A 到 pose_B 的相对变换（A^{-1} * B），frame_id 取 pose_A
+    """
+    # pose_A, pose_B 都是 PoseStamped
+    def to_mat(pose):
+        q = [pose.pose.orientation.x, pose.pose.orientation.y, pose.pose.orientation.z, pose.pose.orientation.w]
+        t = [pose.pose.position.x, pose.pose.position.y, pose.pose.position.z]
+        m = tf_transformations.quaternion_matrix(q)
+        m[0:3, 3] = t
+        return m
+    mat_A = to_mat(pose_A)
+    mat_B = to_mat(pose_B)
+    delta_mat = tf_transformations.inverse_matrix(mat_A) @ mat_B
+    new_pos = delta_mat[0:3, 3]
+    new_quat = tf_transformations.quaternion_from_matrix(delta_mat)
+    res = PoseStamped()
+    res.header = pose_A.header
+    res.pose.position.x = new_pos[0]
+    res.pose.position.y = new_pos[1]
+    res.pose.position.z = new_pos[2]
+    res.pose.orientation.x = new_quat[0]
+    res.pose.orientation.y = new_quat[1]
+    res.pose.orientation.z = new_quat[2]
+    res.pose.orientation.w = new_quat[3]
+    return res
+# ===== end =====
 
 # ===== 自定义 pose 变换函数 start =====
 def manual_transform_pose(pose_stamped, transform_stamped):

@@ -32,7 +32,7 @@ class ApriltagTeleoperationNode(Node):
 
         self.target_publisher = self.create_publisher(
             PoseStamped,
-            '/cartesian_compliance_controller/target_frame',
+            '/cartesian_compliance_controller/safe_interface_frame',
             10
         )
 
