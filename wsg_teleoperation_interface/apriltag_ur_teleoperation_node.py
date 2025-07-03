@@ -8,7 +8,7 @@ import tf_transformations  # 替换 tf2_geometry_msgs
 import math
 
 class ApriltagTeleoperationNode(Node):
-    def __init__(self, use_absolute_pose=False):
+    def __init__(self, use_absolute_pose=True):
         super().__init__('apriltag_teleoperation_node')
         self.get_logger().info('Apriltag Teleoperation Node Started')
 
