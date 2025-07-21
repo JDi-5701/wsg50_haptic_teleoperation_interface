@@ -29,6 +29,7 @@ setup(
             'udp_ros_bridge = wsg_teleoperation_interface.udp_ros_bridge:main',
             'udp_ros_bridge_imu = wsg_teleoperation_interface.udp_ros_bridge_imu:main',
             'apriltag_ur_teleoperation_node = wsg_teleoperation_interface.apriltag_ur_teleoperation_node:main',
+            'wsg_command_relay_node = wsg_teleoperation_interface.wsg_command_relay_node:main',
         ],
     },
 )

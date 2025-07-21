@@ -24,6 +24,7 @@ install(PROGRAMS
   wsg_teleoperation_interface/udp_ros_bridge.py
   wsg_teleoperation_interface/udp_ros_bridge_imu.py
   wsg_teleoperation_interface/apriltag_ur_teleoperation_node.py
+  wsg_teleoperation_interface/wsg_command_relay_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

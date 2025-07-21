@@ -11,37 +11,37 @@ def generate_launch_description():
     return LaunchDescription([
 
         # === 启动 RealSense 摄像头节点 ===
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource([
-                os.path.join(
-                    get_package_share_directory('realsense2_camera'),
-                    'launch',
-                    'rs_launch.py'
-                )
-            ]),
-            # launch_arguments={
-            #     'enable_color': 'true',
-            #     'rgb_camera.color_profile': '640,480,30',
-            #     'rgb_camera.color_format': 'RGB8',
-            #     'enable_depth': 'false',
-            #     # 'depth_module.depth_profile': '640,480,15',
-            #     # 'depth_module.depth_format': 'Z16',
-            #     # 'align_depth.enable': 'true',
-            #     'enable_depth': 'false',
-            #     'enable_infra1': 'false',
-            #     'enable_infra2': 'false',
-            #     'emitter_enabled': 'false',
-            # }.items(),
-            launch_arguments={
-                'enable_color': 'true',
-                'rgb_camera.color_profile': '640,480,30',
-                'rgb_camera.color_format': 'RGB8',
-                'enable_depth': 'false',
-                'enable_infra1': 'false',
-                'enable_infra2': 'false',
-                'emitter_enabled': 'false',
-            }.items(),
-        ),
+        # IncludeLaunchDescription(
+        #     PythonLaunchDescriptionSource([
+        #         os.path.join(
+        #             get_package_share_directory('realsense2_camera'),
+        #             'launch',
+        #             'rs_launch.py'
+        #         )
+        #     ]),
+        #     # launch_arguments={
+        #     #     'enable_color': 'true',
+        #     #     'rgb_camera.color_profile': '640,480,30',
+        #     #     'rgb_camera.color_format': 'RGB8',
+        #     #     'enable_depth': 'false',
+        #     #     # 'depth_module.depth_profile': '640,480,15',
+        #     #     # 'depth_module.depth_format': 'Z16',
+        #     #     # 'align_depth.enable': 'true',
+        #     #     'enable_depth': 'false',
+        #     #     'enable_infra1': 'false',
+        #     #     'enable_infra2': 'false',
+        #     #     'emitter_enabled': 'false',
+        #     # }.items(),
+        #     launch_arguments={
+        #         'enable_color': 'true',
+        #         'rgb_camera.color_profile': '640,480,30',
+        #         'rgb_camera.color_format': 'RGB8',
+        #         'enable_depth': 'false',
+        #         'enable_infra1': 'false',
+        #         'enable_infra2': 'false',
+        #         'emitter_enabled': 'false',
+        #     }.items(),
+        # ),
 
         # === 启动你的 apriltag 节点 ===
         Node(
