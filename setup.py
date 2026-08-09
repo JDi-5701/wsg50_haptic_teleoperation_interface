@@ -2,7 +2,7 @@ from setuptools import setup
 import os
 from glob import glob
 
-package_name = 'wsg_teleoperation_interface'
+package_name = 'wsg50_haptic_teleoperation_interface'
 
 setup(
     name=package_name,
@@ -24,12 +24,12 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'knob_force_feedback_controller_wsg50 = wsg_teleoperation_interface.knob_force_feedback_controller_wsg50:main',
-            'udp_ros_bridge_force_sensor = wsg_teleoperation_interface.udp_ros_bridge_force_sensor:main',
-            'udp_ros_bridge = wsg_teleoperation_interface.udp_ros_bridge:main',
-            'udp_ros_bridge_imu = wsg_teleoperation_interface.udp_ros_bridge_imu:main',
-            'apriltag_ur_teleoperation_node = wsg_teleoperation_interface.apriltag_ur_teleoperation_node:main',
-            'wsg_command_relay_node = wsg_teleoperation_interface.wsg_command_relay_node:main',
+            'knob_force_feedback_controller_wsg50 = wsg50_haptic_teleoperation_interface.knob_force_feedback_controller_wsg50:main',
+            'udp_ros_bridge_force_sensor = wsg50_haptic_teleoperation_interface.udp_ros_bridge_force_sensor:main',
+            'udp_ros_bridge = wsg50_haptic_teleoperation_interface.udp_ros_bridge:main',
+            'udp_ros_bridge_imu = wsg50_haptic_teleoperation_interface.udp_ros_bridge_imu:main',
+            'apriltag_ur_teleoperation_node = wsg50_haptic_teleoperation_interface.apriltag_ur_teleoperation_node:main',
+            'wsg_command_relay_node = wsg50_haptic_teleoperation_interface.wsg_command_relay_node:main',
         ],
     },
 )

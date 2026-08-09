@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(wsg_teleoperation_interface)
+project(wsg50_haptic_teleoperation_interface)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -19,12 +19,12 @@ ament_python_install_package(${PROJECT_NAME})
 
 # Install Python scripts
 install(PROGRAMS
-  wsg_teleoperation_interface/udp_ros_bridge_force_sensor.py
-  wsg_teleoperation_interface/knob_force_feedback_controller_wsg50.py
-  wsg_teleoperation_interface/udp_ros_bridge.py
-  wsg_teleoperation_interface/udp_ros_bridge_imu.py
-  wsg_teleoperation_interface/apriltag_ur_teleoperation_node.py
-  wsg_teleoperation_interface/wsg_command_relay_node.py
+  wsg50_haptic_teleoperation_interface/udp_ros_bridge_force_sensor.py
+  wsg50_haptic_teleoperation_interface/knob_force_feedback_controller_wsg50.py
+  wsg50_haptic_teleoperation_interface/udp_ros_bridge.py
+  wsg50_haptic_teleoperation_interface/udp_ros_bridge_imu.py
+  wsg50_haptic_teleoperation_interface/apriltag_ur_teleoperation_node.py
+  wsg50_haptic_teleoperation_interface/wsg_command_relay_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

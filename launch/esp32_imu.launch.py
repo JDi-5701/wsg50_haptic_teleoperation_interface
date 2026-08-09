@@ -4,7 +4,7 @@ from launch_ros.actions import Node
 def generate_launch_description():
     return LaunchDescription([
         Node(
-            package='wsg_teleoperation_interface',
+            package='wsg50_haptic_teleoperation_interface',
             executable='udp_ros_bridge_imu.py',
             name='esp32_imu_node',
             output='screen',

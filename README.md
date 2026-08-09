@@ -1,4 +1,4 @@
-# wsg_teleoperation_interface
+# wsg50_haptic_teleoperation_interface
 
 
 
@@ -15,14 +15,14 @@ Already a pro? Just edit this README.md and make it your own. Want to make it ea
 
 ```
 cd existing_repo
-git remote add origin https://git.fortiss.org/robotics/students/yihang_xu/wsg_teleoperation_interface.git
+git remote add origin https://git.fortiss.org/robotics/students/yihang_xu/wsg50_haptic_teleoperation_interface.git
 git branch -M main
 git push -uf origin main
 ```
 
 ## Integrate with your tools
 
-- [ ] [Set up project integrations](https://git.fortiss.org/robotics/students/yihang_xu/wsg_teleoperation_interface/-/settings/integrations)
+- [ ] [Set up project integrations](https://git.fortiss.org/robotics/students/yihang_xu/wsg50_haptic_teleoperation_interface/-/settings/integrations)
 
 ## Collaborate with your team
 

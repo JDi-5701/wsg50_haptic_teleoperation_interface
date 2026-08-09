@@ -7,7 +7,7 @@ import os
 
 def generate_launch_description():
     # Get the package directory
-    package_dir = get_package_share_directory('wsg_teleoperation_interface')
+    package_dir = get_package_share_directory('wsg50_haptic_teleoperation_interface')
     wsg50_package_dir = get_package_share_directory('wsg50_ros_driver')
     
     # Include the force sensor bridge launch file

@@ -45,7 +45,7 @@ def generate_launch_description():
 
         # === 启动你的 apriltag 节点 ===
         Node(
-            package='wsg_teleoperation_interface',
+            package='wsg50_haptic_teleoperation_interface',
             executable='apriltag_ur_teleoperation_node.py',
             name='apriltag_ur_teleoperation_node',
             output='screen'
