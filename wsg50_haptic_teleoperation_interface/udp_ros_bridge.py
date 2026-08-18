@@ -21,7 +21,8 @@ class UdpKnobBridge(Node):
         self.declare_parameter('esp32_port', 5000)
         self.declare_parameter('publish_rate', 100.0)
         self.declare_parameter('rate_window_size', 10)
-        
+        self.declare_parameter('calibration_samples', 100)  # ~1 s at 100 Hz; 0 disables
+
         self.local_port = self.get_parameter('local_port').value
         self.esp32_address = (
             self.get_parameter('esp32_address').value,
@@ -52,6 +53,16 @@ class UdpKnobBridge(Node):
         self.knob_state_msg = Int32()
         self.knob_torque_msg = Float32()
         self.esp32_force_msg = Float32()
+
+        # --- 力的零点标定 (tare) ---
+        # The FSR board relays an untared value (~-0.22 N unloaded), so average
+        # the first `calibration_samples` packets into an offset and subtract it
+        # from every later reading. Keep the finger unloaded until "Zero offset"
+        # is logged; gripper_finger_force stays silent until then, while
+        # knob_state and knob_torque publish from the first packet.
+        self.calibration_samples = self.get_parameter('calibration_samples').value
+        self.calib_buffer = []
+        self.zero_offset = 0.0 if self.calibration_samples <= 0 else None
 
 
         # --- 启动 UDP 接收线程 ---
@@ -104,6 +115,16 @@ class UdpKnobBridge(Node):
                     # )
 
 
+                    # --- 零点标定：用每一包，不受发布限频影响 ---
+                    if self.zero_offset is None:
+                        self.calib_buffer.append(force_filtered)
+                        if len(self.calib_buffer) >= self.calibration_samples:
+                            self.zero_offset = sum(self.calib_buffer) / len(self.calib_buffer)
+                            self.get_logger().info(
+                                f"Zero offset = {self.zero_offset:.4f} N "
+                                f"(from {len(self.calib_buffer)} samples)")
+                            self.calib_buffer.clear()
+
                     print("[UDP Raw Message]",
                           f"id: {msg_id}, fsr: {fsr_value}, force: {force_filtered:.2f},",
                           f"force_ts: {force_ts}, motor_ts: {motor_ts},",
@@ -123,11 +144,15 @@ class UdpKnobBridge(Node):
 
                         self.knob_state_msg.data = knob_state
                         self.knob_torque_msg.data = motor_torque
-                        self.esp32_force_msg.data = force_filtered
 
                         self.knob_state_pub.publish(self.knob_state_msg)
                         self.knob_torque_pub.publish(self.knob_torque_msg)
-                        self.esp32_force_pub.publish(self.esp32_force_msg)
+
+                        # Force only once tared, so nothing downstream ever sees
+                        # the raw biased value.
+                        if self.zero_offset is not None:
+                            self.esp32_force_msg.data = float(force_filtered - self.zero_offset)
+                            self.esp32_force_pub.publish(self.esp32_force_msg)
 
                         self.last_publish_time = current_time
 

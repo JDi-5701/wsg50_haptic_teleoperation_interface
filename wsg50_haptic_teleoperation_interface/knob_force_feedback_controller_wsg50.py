@@ -134,6 +134,9 @@ class WSG50TeleoperationInterface(Node):
         # Publish force feedback
         force_msg = Float32()
         force_msg.data = float(-1 * force_feedback)
+        # Not published on purpose: the haptic loop is closed on the ESP32 side
+        # (the FSR board sends straight to the knob board, which drives its own
+        # motor). The PC only maps knob_state -> gripper width.
         #self.knob_force_pub.publish(force_msg)
         self.get_logger().debug(f'Force feedback: {force_feedback:.2f} N')
     
