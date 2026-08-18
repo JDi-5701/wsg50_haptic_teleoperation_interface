@@ -31,6 +31,9 @@ Topics
     publishes   /knob_state     (Int32)    knob position, milliradians
                 /knob_torque    (Float32)  q-axis voltage, V
 
+Every received packet is republished; see the publish_rate parameter for why
+throttling is off by default.
+
 The command is resent every tx period whether or not it changed, because the
 link is UDP and the board holds the last value it received. If commands stop
 arriving for `command_timeout`, zeros go out instead - a dead publisher must
@@ -72,7 +75,13 @@ class OmniHgiUdpDriver(Node):
         # vTaskDelay(10 ms), so anything above 100 Hz just backs up in the
         # board's UDP buffer and shows up as growing latency.
         self.declare_parameter('tx_rate', 100.0)
-        self.declare_parameter('publish_rate', 100.0)
+
+        # 0 disables throttling, which is the right default: the board is
+        # already the slower end, and WiFi delivers its packets in bursts (an
+        # observed minimum inter-arrival of 0 ms against a ~13 ms median). A
+        # rate limiter keeps the FIRST packet of a burst and drops the rest,
+        # so it would publish the oldest sample and discard the freshest.
+        self.declare_parameter('publish_rate', 0.0)
 
         self.declare_parameter('command_timeout', 0.5)
 
@@ -81,7 +90,8 @@ class OmniHgiUdpDriver(Node):
             self.get_parameter('esp32_port').value,
         )
         self.command_timeout = self.get_parameter('command_timeout').value
-        self.min_publish_interval = 1.0 / self.get_parameter('publish_rate').value
+        publish_rate = self.get_parameter('publish_rate').value
+        self.min_publish_interval = 1.0 / publish_rate if publish_rate > 0 else 0.0
 
         local_port = self.get_parameter('local_port').value
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -184,9 +194,10 @@ class OmniHgiUdpDriver(Node):
                 self.lost_count = 0
                 self.last_rate_log = now
 
-            if now - self.last_publish_time < self.min_publish_interval:
-                continue
-            self.last_publish_time = now
+            if self.min_publish_interval:
+                if now - self.last_publish_time < self.min_publish_interval:
+                    continue
+                self.last_publish_time = now
 
             knob_state_msg.data = knob_state
             knob_torque_msg.data = motor_torque

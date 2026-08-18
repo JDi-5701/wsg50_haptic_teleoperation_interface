@@ -99,7 +99,7 @@ def generate_launch_description():
                 'esp32_address': LaunchConfiguration('esp32_ip'),
                 'esp32_port': 5000,
                 'tx_rate': 100.0,
-                'publish_rate': 100.0,
+                'publish_rate': 0.0,
                 'command_timeout': 0.5,
             }],
         ),
