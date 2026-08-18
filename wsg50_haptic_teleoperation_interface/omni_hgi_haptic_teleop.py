@@ -3,7 +3,8 @@
 
 Two independent mappings, both pure ROS:
 
-    /knob_state              -> /wsg50/command/move   (operator drives gripper)
+    /knob_state              -> /wsg50/command/move   (operator drives gripper,
+                                                       sent only on change)
     /tactile_resultant_wrench -> /coil_command        (gripper force felt back)
 
 omni_hgi_udp_driver.py owns the socket and the wire format; this node owns the
@@ -63,6 +64,12 @@ class OmniHgiHapticTeleop(Node):
         self.declare_parameter('gripper_velocity', 0.1)
         self.declare_parameter('gripper_start_width', 102.0)
         self.declare_parameter('control_rate', 100.0)
+        # Republishing an unchanged target is not free: the WSG50 driver clears
+        # and refills a 52-waypoint queue per command, so a steady 100 Hz of
+        # identical targets is 5200 pointless queue operations a second and
+        # floods its log. Only move commands are sent, and this deadband also
+        # swallows the knob's +/-3 mrad encoder noise (about 0.04 mm).
+        self.declare_parameter('command_deadband', 0.05)
         self.declare_parameter('invert_knob', True)
 
         # --- fingertip -> coils ---
@@ -86,6 +93,8 @@ class OmniHgiHapticTeleop(Node):
         self.coil_deadzone = self.get_parameter('coil_deadzone').value
 
         self.gripper_target = self.get_parameter('gripper_start_width').value
+        self.command_deadband = self.get_parameter('command_deadband').value
+        self.last_commanded = None             # None until the first command
         self.knob_last = None                  # None until the first packet
         self.pending_delta = 0.0               # consumed by the control loop
 
@@ -135,10 +144,16 @@ class OmniHgiHapticTeleop(Node):
                 f'target {self.gripper_target:.2f} mm')
             self.pending_delta = 0.0
 
+        if (self.last_commanded is not None
+                and abs(self.gripper_target - self.last_commanded)
+                < self.command_deadband):
+            return
+
         cmd = GripperCommand()
         cmd.position = float(self.gripper_target)
         cmd.velocity = float(self.gripper_velocity)
         self.gripper_cmd_pub.publish(cmd)
+        self.last_commanded = self.gripper_target
 
     # ---------------- fingertip -> coils ----------------
     def wrench_callback(self, msg):
