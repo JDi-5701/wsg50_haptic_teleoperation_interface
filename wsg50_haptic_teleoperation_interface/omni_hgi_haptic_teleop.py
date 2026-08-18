@@ -70,7 +70,10 @@ class OmniHgiHapticTeleop(Node):
         # floods its log. Only move commands are sent, and this deadband also
         # swallows the knob's +/-3 mrad encoder noise (about 0.04 mm).
         self.declare_parameter('command_deadband', 0.05)
-        self.declare_parameter('invert_knob', True)
+        # False = turning the knob one way opens the gripper; True flips it.
+        # Verified against the hardware, so changing this inverts the operator's
+        # expectation - retune rather than flip it to fix a sign elsewhere.
+        self.declare_parameter('invert_knob', False)
 
         # --- fingertip -> coils ---
         self.declare_parameter('coil_ratio', 0.08)
