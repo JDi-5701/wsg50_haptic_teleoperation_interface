@@ -93,9 +93,19 @@ class OmniHgiUdpDriver(Node):
         publish_rate = self.get_parameter('publish_rate').value
         self.min_publish_interval = 1.0 / publish_rate if publish_rate > 0 else 0.0
 
+        # Separate sockets per direction, deliberately. A single shared socket
+        # carries one blocking mode for both: settimeout() for the receive
+        # thread also applies to sendto(), so when the board drops off WiFi the
+        # send blocks up to the timeout on the executor thread and stalls the
+        # whole node - command intake and the coil watchdog included. The board
+        # sends to a hardcoded address:port rather than replying to our source
+        # port, so transmitting from a different socket is invisible to it.
         local_port = self.get_parameter('local_port').value
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.bind(('0.0.0.0', local_port))
+        self.rx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.rx_sock.bind(('0.0.0.0', local_port))
+        self.rx_sock.settimeout(0.1)          # set once, not per iteration
+        self.tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.tx_sock.setblocking(False)       # a dead board must never stall us
         self.get_logger().info(f'Bound to local port {local_port}')
 
         self.knob_state_pub = self.create_publisher(Int32, 'knob_state', 10)
@@ -114,6 +124,10 @@ class OmniHgiUdpDriver(Node):
         self.lost_count = 0
         self.last_msg_id = None
         self.last_rate_log = time.time()
+        self.last_rx_time = time.time()
+        self.rx_stalled = False
+        self.send_errors = 0
+        self.last_send_error_log = 0.0
 
         self.running = True
         self.rx_thread = threading.Thread(target=self.rx_loop, daemon=True)
@@ -144,11 +158,19 @@ class OmniHgiUdpDriver(Node):
 
         x, y, z = self.cmd
         try:
-            self.sock.sendto(
+            self.tx_sock.sendto(
                 struct.pack(FORCE_MSG_3D_FORMAT, float(x), float(y), float(z)),
                 self.esp32_address)
+            self.send_errors = 0
         except OSError as e:
-            self.get_logger().error(f'UDP send failed: {e}')
+            # Throttled: an unreachable board fails every tx period, and at
+            # 100 Hz the raw error drowns everything else in the log.
+            self.send_errors += 1
+            now = time.time()
+            if now - self.last_send_error_log >= 2.0:
+                self.get_logger().error(
+                    f'UDP send failing ({self.send_errors} times): {e}')
+                self.last_send_error_log = now
 
     # ---------------- ESP32 -> PC ----------------
     def rx_loop(self):
@@ -157,10 +179,18 @@ class OmniHgiUdpDriver(Node):
 
         while self.running:
             try:
-                self.sock.settimeout(0.1)
-                data, addr = self.sock.recvfrom(1024)
+                data, addr = self.rx_sock.recvfrom(1024)
             except (socket.timeout, OSError):
+                if not self.rx_stalled and time.time() - self.last_rx_time > 2.0:
+                    self.rx_stalled = True
+                    self.get_logger().warn(
+                        'No packet from the board for 2 s - is it powered and '
+                        'on WiFi?')
                 continue
+            if self.rx_stalled:
+                self.get_logger().info('Board is back.')
+                self.rx_stalled = False
+            self.last_rx_time = time.time()
 
             # Exact length: MotorMsg and ForceMsg3D are both 12 B, so a stray
             # command echoed back would unpack cleanly into nonsense. Together
@@ -210,11 +240,12 @@ class OmniHgiUdpDriver(Node):
             self.rx_thread.join(timeout=1.0)
         # Park the coils before dropping the link.
         try:
-            self.sock.sendto(
+            self.tx_sock.sendto(
                 struct.pack(FORCE_MSG_3D_FORMAT, 0.0, 0.0, 0.0), self.esp32_address)
         except OSError:
             pass
-        self.sock.close()
+        self.tx_sock.close()
+        self.rx_sock.close()
         super().destroy_node()
 
 

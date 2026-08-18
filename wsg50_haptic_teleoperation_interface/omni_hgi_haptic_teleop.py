@@ -3,8 +3,7 @@
 
 Two independent mappings, both pure ROS:
 
-    /knob_state              -> /wsg50/command/move   (operator drives gripper,
-                                                       sent only on change)
+    /knob_state              -> /wsg50/command/move   (operator drives gripper)
     /tactile_resultant_wrench -> /coil_command        (gripper force felt back)
 
 omni_hgi_udp_driver.py owns the socket and the wire format; this node owns the
@@ -54,26 +53,21 @@ class OmniHgiHapticTeleop(Node):
         super().__init__('omni_hgi_haptic_teleop')
 
         # --- knob -> gripper ---
-        # mm of gripper width per milliradian of knob rotation.
+        # Carried over verbatim from knob_force_feedback_controller_wsg50.py,
+        # which was working on the hardware. position_factor is now mm of
+        # gripper width per MILLIRADIAN, since that is what the reworked
+        # firmware sends, but the integration itself is unchanged.
         self.declare_parameter('position_factor', 0.013)
-        # Milliradians between packets. At 100 Hz, 1000 mrad is 100 rad/s -
-        # far faster than a hand, so anything above it is a glitch or a wrap.
         self.declare_parameter('position_jump_threshold', 1000)
         self.declare_parameter('gripper_min_width', 10.0)
         self.declare_parameter('gripper_max_width', 105.0)
         self.declare_parameter('gripper_velocity', 0.1)
         self.declare_parameter('gripper_start_width', 102.0)
         self.declare_parameter('control_rate', 100.0)
-        # Republishing an unchanged target is not free: the WSG50 driver clears
-        # and refills a 52-waypoint queue per command, so a steady 100 Hz of
-        # identical targets is 5200 pointless queue operations a second and
-        # floods its log. Only move commands are sent, and this deadband also
-        # swallows the knob's +/-3 mrad encoder noise (about 0.04 mm).
-        self.declare_parameter('command_deadband', 0.05)
-        # False = turning the knob one way opens the gripper; True flips it.
-        # Verified against the hardware, so changing this inverts the operator's
-        # expectation - retune rather than flip it to fix a sign elsewhere.
-        self.declare_parameter('invert_knob', False)
+        # 0 keeps the original behaviour of commanding on every tick. Set it
+        # positive to suppress unchanged targets, which quiets the WSG50
+        # driver's per-command 52-waypoint requeue and its log.
+        self.declare_parameter('command_deadband', 0.0)
 
         # --- fingertip -> coils ---
         self.declare_parameter('coil_ratio', 0.08)
@@ -87,7 +81,6 @@ class OmniHgiHapticTeleop(Node):
         self.gripper_min_width = self.get_parameter('gripper_min_width').value
         self.gripper_max_width = self.get_parameter('gripper_max_width').value
         self.gripper_velocity = self.get_parameter('gripper_velocity').value
-        self.knob_sign = -1.0 if self.get_parameter('invert_knob').value else 1.0
 
         self.coil_ratio = self.get_parameter('coil_ratio').value
         self.coil_max_duty = self.get_parameter('coil_max_duty').value
@@ -98,8 +91,8 @@ class OmniHgiHapticTeleop(Node):
         self.gripper_target = self.get_parameter('gripper_start_width').value
         self.command_deadband = self.get_parameter('command_deadband').value
         self.last_commanded = None             # None until the first command
-        self.knob_last = None                  # None until the first packet
-        self.pending_delta = 0.0               # consumed by the control loop
+        self.knob_position_last = 0
+        self.position_change = 0.0
 
         self.gripper_cmd_pub = self.create_publisher(
             GripperCommand, '/wsg50/command/move', 10)
@@ -119,35 +112,24 @@ class OmniHgiHapticTeleop(Node):
 
     # ---------------- knob -> gripper ----------------
     def knob_callback(self, msg):
-        # Absolute knob angle in milliradians; only its change matters. The
-        # first packet sets the reference instead of reading as a huge delta.
-        if self.knob_last is None:
-            self.knob_last = msg.data
-            self.get_logger().info(f'Knob reference set at {msg.data} mrad.')
-            return
+        knob_position_current = msg.data
+        knob_position_delta = knob_position_current - self.knob_position_last
 
-        delta = msg.data - self.knob_last
-        self.knob_last = msg.data
+        if abs(knob_position_delta) > self.position_jump_threshold:
+            self.get_logger().warn(
+                f'Large position jump detected: {knob_position_delta}')
+        else:
+            self.position_change = -1 * self.position_factor * knob_position_delta
 
-        if abs(delta) > self.position_jump_threshold:
-            self.get_logger().warn(f'Ignoring knob jump of {delta} mrad.')
-            return
-
-        # Accumulate: the control loop may tick more than once per knob packet,
-        # and must not apply the same delta twice.
-        self.pending_delta += self.knob_sign * self.position_factor * delta
+        self.knob_position_last = knob_position_current
 
     def control_loop(self):
-        if self.pending_delta:
-            self.gripper_target = clamp(self.gripper_target + self.pending_delta,
-                                        self.gripper_min_width,
-                                        self.gripper_max_width)
-            self.get_logger().info(
-                f'Knob {self.pending_delta:+.2f} mm -> '
-                f'target {self.gripper_target:.2f} mm')
-            self.pending_delta = 0.0
+        self.gripper_target -= self.position_change
+        self.gripper_target = clamp(self.gripper_target,
+                                    self.gripper_min_width,
+                                    self.gripper_max_width)
 
-        if (self.last_commanded is not None
+        if (self.command_deadband and self.last_commanded is not None
                 and abs(self.gripper_target - self.last_commanded)
                 < self.command_deadband):
             return
@@ -157,6 +139,12 @@ class OmniHgiHapticTeleop(Node):
         cmd.velocity = float(self.gripper_velocity)
         self.gripper_cmd_pub.publish(cmd)
         self.last_commanded = self.gripper_target
+
+        if abs(self.position_change) > 0:
+            self.get_logger().info(
+                f'Position change: {self.position_change:.2f} mm')
+            self.get_logger().info(
+                f'Gripper target: {self.gripper_target:.2f} mm')
 
     # ---------------- fingertip -> coils ----------------
     def wrench_callback(self, msg):
