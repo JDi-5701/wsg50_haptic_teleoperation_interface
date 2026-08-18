@@ -4,27 +4,27 @@ Full chain, PC side:
 
     paxini_2015_finger_node        /tactile_resultant_wrench  (30 Hz)
               |
-    omni_hgi_bridge                Fx,Fy -> coils / Fz -> knob motor, 12 B UDP
-              |  <-- 36 B UDP        /knob_state, /knob_torque,
-              |                      /gripper_finger_force
-    wsg50_controller               /knob_state -> /wsg50/command/move
+    omni_hgi_haptic_teleop         Fx,Fy -> coils / Fz -> knob  =>  /coil_command
+              |                      /knob_state -> /wsg50/command/move
+    omni_hgi_udp_driver            /coil_command -> 12 B UDP
+              |  <-- 36 B UDP        -> /knob_state, /knob_torque
               |
     wsg50_ros_driver               the gripper
 
 Unlike the FSR/knob setup this replaces, the loop is closed through the PC:
-the fingertip force reaches the coils only via omni_hgi_bridge. If this node
-dies the bridge zeroes the coils after `force_timeout`.
+the fingertip force reaches the coils only via these two nodes. If either
+stops, omni_hgi_udp_driver zeroes the coils after `command_timeout`.
 
 Usage:
     # sensing + feedback only, gripper stays put
-    ros2 launch wsg50_haptic_teleoperation_interface omni_hgi_teleop.launch.py \
+    ros2 launch wsg50_haptic_teleoperation_interface omni_hgi.launch.py \
         use_gripper:=false
 
     # everything (the gripper HOMES on startup - keep fingers clear)
-    ros2 launch wsg50_haptic_teleoperation_interface omni_hgi_teleop.launch.py
+    ros2 launch wsg50_haptic_teleoperation_interface omni_hgi.launch.py
 
     # tuning the shear-to-coil gain
-    ros2 launch ... omni_hgi_teleop.launch.py coil_ratio:=0.12
+    ros2 launch ... omni_hgi.launch.py coil_ratio:=0.12
 """
 
 import os
@@ -88,11 +88,11 @@ def generate_launch_description():
             }],
         ),
 
-        # --- Bridge: force out to the coils, knob state back in ---
+        # --- Transport: UDP <-> topics, no policy ---
         Node(
             package='wsg50_haptic_teleoperation_interface',
-            executable='omni_hgi_bridge.py',
-            name='omni_hgi_bridge',
+            executable='omni_hgi_udp_driver.py',
+            name='omni_hgi_udp_driver',
             output='screen',
             parameters=[{
                 'local_port': 5001,
@@ -100,21 +100,23 @@ def generate_launch_description():
                 'esp32_port': 5000,
                 'tx_rate': 100.0,
                 'publish_rate': 100.0,
-                'coil_ratio': LaunchConfiguration('coil_ratio'),
-                'coil_max_duty': LaunchConfiguration('coil_max_duty'),
-                'knob_force_ratio': LaunchConfiguration('knob_force_ratio'),
-                'calibration_samples': 100,
-                'force_timeout': 0.5,
+                'command_timeout': 0.5,
             }],
         ),
 
-        # --- Knob -> gripper width ---
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(haptic_launch, 'teleoperation_interface.launch.py')),
-            launch_arguments={
+        # --- Policy: knob -> gripper, fingertip -> coils ---
+        Node(
+            package='wsg50_haptic_teleoperation_interface',
+            executable='omni_hgi_haptic_teleop.py',
+            name='omni_hgi_haptic_teleop',
+            output='screen',
+            parameters=[{
                 'position_factor': LaunchConfiguration('position_factor'),
-            }.items(),
+                'coil_ratio': LaunchConfiguration('coil_ratio'),
+                'coil_max_duty': LaunchConfiguration('coil_max_duty'),
+                'knob_force_ratio': LaunchConfiguration('knob_force_ratio'),
+                'control_rate': 100.0,
+            }],
         ),
 
         # --- The gripper itself ---
