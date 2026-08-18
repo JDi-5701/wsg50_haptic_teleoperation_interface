@@ -18,9 +18,8 @@ one home.
 Both structs are 12 B, so size alone cannot tell them apart. That is harmless
 here because each travels one way only - the board never receives MotorMsg and
 this node never receives ForceMsg3D - but it does mean the source-address check
-below is load-bearing, not just tidy. The board still demultiplexes its own
-input by size (12 B command vs the FSR board's 24 B FSRMsg), which is why the
-command length is asserted at import.
+in rx_loop is load-bearing, not just tidy, and the receive path demands an
+exact length rather than a minimum.
 
 force_z is passed through in newtons. The board applies its own gain, offset,
 log compression and clamp in computeForceFeedback(), so pre-scaling here would

@@ -10,9 +10,10 @@ omni_hgi_udp_driver.py owns the socket and the wire format; this node owns the
 gains and limits. Splitting them keeps the protocol in one file and the tuning
 in another, and lets either be tested without the other.
 
-The haptic loop is closed through the PC here, unlike the FSR/knob setup where
-the two boards talked directly. Latency is therefore Paxini poll + ROS + UDP,
-and the Paxini node's 30 Hz is the slowest link in it.
+The haptic loop is closed through the PC: the Paxini fingertip is the only
+force source, and nothing reaches the coils or the knob motor except through
+these topics. Latency is Paxini poll + ROS + UDP, and the Paxini node's 30 Hz
+is the slowest link in it.
 
 Coil mapping - the fingertip's shear becomes coil drive, its normal force
 becomes knob resistance:

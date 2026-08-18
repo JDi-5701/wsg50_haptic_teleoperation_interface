@@ -11,8 +11,8 @@ Full chain, PC side:
               |
     wsg50_ros_driver               the gripper
 
-Unlike the FSR/knob setup this replaces, the loop is closed through the PC:
-the fingertip force reaches the coils only via these two nodes. If either
+The Paxini fingertip is the only force source; the loop is closed through the
+PC, so fingertip force reaches the coils only via these two nodes. If either
 stops, omni_hgi_udp_driver zeroes the coils after `command_timeout`.
 
 Usage:
