@@ -1,19 +1,4 @@
 #!/usr/bin/env python3
-"""SUPERSEDED by omni_hgi_bridge.py - kept for reference only.
-
-Written against an earlier firmware and no longer matches wifi_task.h:
-
-  * TX packs '<ff' (8 B); receiveUdpForce() dispatches on size and only
-    accepts ForceMsg3D at 12 B, so every command is dropped with
-    "Received packet of unexpected size 8" and the coils never actuate.
-  * RX expects '<i' (4 B); the board sends MotorMsg at 36 B, so the
-    `len(data) == UDP_RX_SIZE` test never passes and /knob_state is silent.
-  * Binds :5001 and publishes /knob_state, colliding with udp_ros_bridge.py,
-    which talks to the same board.
-
-omni_hgi_bridge.py replaces both nodes with one socket and the current
-protocol. Run that instead.
-"""
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Int32
