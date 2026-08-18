@@ -6,26 +6,31 @@ decisions live in omni_hgi_haptic_teleop.py. This node only translates between
 ROS messages and the wire structs in wifi_task.h, so the protocol has exactly
 one home.
 
-    ESP32 -> PC   MotorMsg    36 B  '<ii f Q Q f i'   packed
-                  id, fsr_value, force_filtered, force_ts, motor_ts,
-                  motor_torque, knob_state
+    ESP32 -> PC   MotorMsg    12 B  '<i f i'   packed
+                  id            packet sequence counter
+                  motor_torque  q-axis voltage, V
+                  knob_state    knob position, MILLIRADIANS, absolute
 
     PC -> ESP32   ForceMsg3D  12 B  '<fff'
-                  force_x, force_y  -> 2D coils
-                  force_z           -> knob feedback motor
+                  force_x, force_y  -> 2D coils, normalised duty in [-1, 1]
+                  force_z           -> knob feedback motor, newtons
 
-The board demultiplexes on packet size, so the 12 B command cannot be confused
-with the 24 B FSRMsg the FSR board sends. Both sizes are asserted at import.
+Both structs are 12 B, so size alone cannot tell them apart. That is harmless
+here because each travels one way only - the board never receives MotorMsg and
+this node never receives ForceMsg3D - but it does mean the source-address check
+below is load-bearing, not just tidy. The board still demultiplexes its own
+input by size (12 B command vs the FSR board's 24 B FSRMsg), which is why the
+command length is asserted at import.
 
-Only knob_state and motor_torque are republished. MotorMsg still carries
-fsr_value and force_filtered from the FSR-relay era, but the fingertip force
-now comes from the Paxini sensor over its own ROS topic, so those fields are
-unpacked and dropped.
+force_z is passed through in newtons. The board applies its own gain, offset,
+log compression and clamp in computeForceFeedback(), so pre-scaling here would
+be applied twice. force_x/y are already normalised: forceToCounts() clamps
+|value| to 1.0 and maps it onto the 10-bit PWM range, with a +/-0.001 deadband.
 
 Topics
     subscribes  /coil_command   (Vector3)  x,y -> coils / z -> knob motor
-    publishes   /knob_state     (Int32)    encoder count, absolute
-                /knob_torque    (Float32)  feedback motor torque
+    publishes   /knob_state     (Int32)    knob position, milliradians
+                /knob_torque    (Float32)  q-axis voltage, V
 
 The command is resent every tx period whether or not it changed, because the
 link is UDP and the board holds the last value it received. If commands stop
@@ -47,12 +52,12 @@ from rclpy.node import Node
 from std_msgs.msg import Float32, Int32
 
 # --- Wire formats, mirroring the firmware structs they must match ---
-MOTOR_MSG_FORMAT = '<ii f Q Q f i'          # MotorMsg, #pragma pack(1)
+MOTOR_MSG_FORMAT = '<i f i'                 # MotorMsg, #pragma pack(1)
 MOTOR_MSG_SIZE = struct.calcsize(MOTOR_MSG_FORMAT)
 FORCE_MSG_3D_FORMAT = '<fff'                # ForceMsg3D
 FORCE_MSG_3D_SIZE = struct.calcsize(FORCE_MSG_3D_FORMAT)
 
-assert MOTOR_MSG_SIZE == 36, MOTOR_MSG_SIZE
+assert MOTOR_MSG_SIZE == 12, MOTOR_MSG_SIZE
 assert FORCE_MSG_3D_SIZE == 12, FORCE_MSG_3D_SIZE
 
 
@@ -97,6 +102,8 @@ class OmniHgiUdpDriver(Node):
 
         self.last_publish_time = 0.0
         self.rx_count = 0
+        self.lost_count = 0
+        self.last_msg_id = None
         self.last_rate_log = time.time()
 
         self.running = True
@@ -146,19 +153,36 @@ class OmniHgiUdpDriver(Node):
             except (socket.timeout, OSError):
                 continue
 
-            if addr[0] != self.esp32_address[0] or len(data) < MOTOR_MSG_SIZE:
+            # Exact length: MotorMsg and ForceMsg3D are both 12 B, so a stray
+            # command echoed back would unpack cleanly into nonsense. Together
+            # with the source check above this keeps the two apart.
+            if addr[0] != self.esp32_address[0] or len(data) != MOTOR_MSG_SIZE:
                 continue
 
-            # fsr_value and force_filtered belong to the retired FSR relay path.
-            (_msg_id, _fsr_value, _force_filtered, _force_ts,
-             _motor_ts, motor_torque, knob_state) = struct.unpack(
-                MOTOR_MSG_FORMAT, data[:MOTOR_MSG_SIZE])
+            msg_id, motor_torque, knob_state = struct.unpack(MOTOR_MSG_FORMAT, data)
+
+            # id is a sequence counter, so gaps in it are dropped packets.
+            if self.last_msg_id is not None:
+                gap = msg_id - self.last_msg_id
+                if gap > 1:
+                    self.lost_count += gap - 1
+                elif gap <= 0:
+                    self.get_logger().warn(
+                        f'Sequence went backwards ({self.last_msg_id} -> '
+                        f'{msg_id}); board restarted?')
+                    self.lost_count = 0
+            self.last_msg_id = msg_id
 
             self.rx_count += 1
             now = time.time()
             if now - self.last_rate_log >= 1.0:
-                self.get_logger().info(f'RX {self.rx_count} packets/s')
+                if self.lost_count:
+                    self.get_logger().warn(
+                        f'RX {self.rx_count} packets/s, {self.lost_count} lost')
+                else:
+                    self.get_logger().info(f'RX {self.rx_count} packets/s')
                 self.rx_count = 0
+                self.lost_count = 0
                 self.last_rate_log = now
 
             if now - self.last_publish_time < self.min_publish_interval:

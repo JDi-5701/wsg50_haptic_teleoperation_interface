@@ -6,8 +6,8 @@ Full chain, PC side:
               |
     omni_hgi_haptic_teleop         Fx,Fy -> coils / Fz -> knob  =>  /coil_command
               |                      /knob_state -> /wsg50/command/move
-    omni_hgi_udp_driver            /coil_command -> 12 B UDP
-              |  <-- 36 B UDP        -> /knob_state, /knob_torque
+    omni_hgi_udp_driver            /coil_command -> ForceMsg3D 12 B
+              |  <-- MotorMsg 12 B    -> /knob_state, /knob_torque
               |
     wsg50_ros_driver               the gripper
 
@@ -64,7 +64,7 @@ def generate_launch_description():
             'knob_force_ratio', default_value='1.0',
             description='Knob feedback force per newton of normal force (Fz).'),
         DeclareLaunchArgument('position_factor', default_value='0.013',
-                              description='mm of gripper width per knob count'),
+                              description='mm of gripper width per milliradian of knob rotation'),
         DeclareLaunchArgument(
             'use_gripper', default_value='true',
             description='Start the WSG50 driver. false = test the haptic loop '

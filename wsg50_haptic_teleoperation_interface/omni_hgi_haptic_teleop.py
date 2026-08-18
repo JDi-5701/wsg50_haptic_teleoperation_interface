@@ -21,6 +21,17 @@ becomes knob resistance:
     /coil_command.y = clamp(Fy * coil_ratio, +/- coil_max_duty)
     /coil_command.z = clamp(Fz * knob_force_ratio, +/- knob_force_max)
 
+x and y are normalised coil duty: the board clamps |value| to 1.0 in
+forceToCounts() before mapping onto its 10-bit PWM, and ignores anything under
+0.001. z stays in newtons - computeForceFeedback() on the board applies its own
+ratio, offset, log compression and clamp, so scaling it here would apply a gain
+twice. knob_force_ratio therefore defaults to 1.0, a pass-through.
+
+knob_state arrives in MILLIRADIANS (the firmware sends
+int32_t(1000 * angle_from_start)), not encoder counts, so position_factor is mm
+of gripper width per milliradian. At the 0.013 default the gripper's 95 mm span
+takes about 7.3 rad, a little over one turn of the knob.
+
 Standalone:
     ros2 run wsg50_haptic_teleoperation_interface omni_hgi_haptic_teleop.py
 """
@@ -41,7 +52,10 @@ class OmniHgiHapticTeleop(Node):
         super().__init__('omni_hgi_haptic_teleop')
 
         # --- knob -> gripper ---
+        # mm of gripper width per milliradian of knob rotation.
         self.declare_parameter('position_factor', 0.013)
+        # Milliradians between packets. At 100 Hz, 1000 mrad is 100 rad/s -
+        # far faster than a hand, so anything above it is a glitch or a wrap.
         self.declare_parameter('position_jump_threshold', 1000)
         self.declare_parameter('gripper_min_width', 10.0)
         self.declare_parameter('gripper_max_width', 105.0)
@@ -92,18 +106,18 @@ class OmniHgiHapticTeleop(Node):
 
     # ---------------- knob -> gripper ----------------
     def knob_callback(self, msg):
-        # Absolute encoder count; only its change matters. The first packet
-        # establishes the reference instead of being read as a huge delta.
+        # Absolute knob angle in milliradians; only its change matters. The
+        # first packet sets the reference instead of reading as a huge delta.
         if self.knob_last is None:
             self.knob_last = msg.data
-            self.get_logger().info(f'Knob reference set at {msg.data}.')
+            self.get_logger().info(f'Knob reference set at {msg.data} mrad.')
             return
 
         delta = msg.data - self.knob_last
         self.knob_last = msg.data
 
         if abs(delta) > self.position_jump_threshold:
-            self.get_logger().warn(f'Ignoring knob jump of {delta} counts.')
+            self.get_logger().warn(f'Ignoring knob jump of {delta} mrad.')
             return
 
         # Accumulate: the control loop may tick more than once per knob packet,
