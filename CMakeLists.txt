@@ -13,6 +13,7 @@ find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
 # Install Python package
 ament_python_install_package(${PROJECT_NAME})
@@ -27,6 +28,14 @@ install(PROGRAMS
   wsg50_haptic_teleoperation_interface/wsg_command_relay_node.py
   wsg50_haptic_teleoperation_interface/omni_hgi_udp_driver.py
   wsg50_haptic_teleoperation_interface/omni_hgi_haptic_teleop.py
+  wsg50_haptic_teleoperation_interface/usb_camera_node.py
+  wsg50_haptic_teleoperation_interface/apriltag_detector_node.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+# Install helper scripts
+install(PROGRAMS
+  scripts/calibrate_camera.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
