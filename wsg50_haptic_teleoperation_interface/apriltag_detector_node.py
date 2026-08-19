@@ -5,6 +5,10 @@ OpenCV 4.2 ships the AprilTag families in cv2.aruco, so this needs no
 apriltag_ros, no apriltag C library and no cv_bridge - none of which are
 installed here. Image messages are unpacked by hand.
 
+A tag backlit against a window underexposes badly. Detection runs on a
+gamma-corrected retry when the first pass finds nothing, which recovered 100%
+of frames where the raw image managed 14%.
+
 Topics
     subscribes  image_raw/compressed  (CompressedImage)  or image_raw (Image)
                 camera_info           (CameraInfo)       intrinsics
@@ -85,7 +89,7 @@ class AprilTagDetectorNode(Node):
         super().__init__('apriltag_detector_node')
 
         self.declare_parameter('tag_family', '36h11')
-        self.declare_parameter('tag_size', 0.038)          # metres, outer black square
+        self.declare_parameter('tag_size', 0.087)          # metres, outer black square
         self.declare_parameter('use_compressed', True)
         self.declare_parameter('publish_debug_image', True)
         self.declare_parameter('publish_tf', True)
@@ -94,6 +98,15 @@ class AprilTagDetectorNode(Node):
         # read at a steep angle or half out of frame can still decode while its
         # pose is nonsense; this is the cheapest way to catch that.
         self.declare_parameter('max_reprojection_error', 3.0)
+        # Gamma applied before detection. <1 lifts shadows, which matters when
+        # the tag is backlit: measured against a window, raw frames detected in
+        # 14% of frames and gamma 0.45 in 100%. Manual exposure was no help -
+        # this camera ignores CAP_PROP_EXPOSURE, its frame mean staying at 110
+        # whatever it is set to. 1.0 disables.
+        self.declare_parameter('gamma', 1.0)
+        # Retried only when the first pass finds nothing, so a well-exposed
+        # scene pays nothing for it. 0 disables the retry.
+        self.declare_parameter('gamma_fallback', 0.45)
 
         family = self.get_parameter('tag_family').value
         if family not in FAMILIES:
@@ -119,6 +132,17 @@ class AprilTagDetectorNode(Node):
 
         self.camera_matrix = None
         self.dist_coeffs = None
+
+        def build_lut(g):
+            if g <= 0 or g == 1.0:
+                return None
+            return np.array([((i / 255.0) ** g) * 255 for i in range(256)],
+                            np.uint8)
+
+        self.lut = build_lut(float(self.get_parameter('gamma').value))
+        self.lut_fallback = build_lut(
+            float(self.get_parameter('gamma_fallback').value))
+        self.fallback_hits = 0
 
         self.detections_pub = self.create_publisher(PoseArray, 'tag_detections', 10)
         self.debug_pub = self.create_publisher(CompressedImage, 'tag_image', 1)
@@ -177,8 +201,17 @@ class AprilTagDetectorNode(Node):
             return
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if self.lut is not None:
+            gray = cv2.LUT(gray, self.lut)
         corners, ids, _ = cv2.aruco.detectMarkers(
             gray, self.dictionary, parameters=self.params)
+
+        if ids is None and self.lut_fallback is not None:
+            corners, ids, _ = cv2.aruco.detectMarkers(
+                cv2.LUT(gray, self.lut_fallback), self.dictionary,
+                parameters=self.params)
+            if ids is not None:
+                self.fallback_hits += 1
 
         pose_array = PoseArray()
         pose_array.header.stamp = header.stamp
@@ -274,9 +307,12 @@ class AprilTagDetectorNode(Node):
             self.get_logger().warn('Still no camera_info - is the camera node up?')
             return
         note = f', {self.rejected} rejected on reprojection' if self.rejected else ''
+        if self.fallback_hits:
+            note += (f', {self.fallback_hits} only found after gamma - the '
+                     f'scene is underexposing the tag')
         self.get_logger().info(
             f'{self.frames} frames, {self.hits} tag sightings{note} (last 5 s)')
-        self.frames = self.hits = self.rejected = 0
+        self.frames = self.hits = self.rejected = self.fallback_hits = 0
 
 
 def main(args=None):

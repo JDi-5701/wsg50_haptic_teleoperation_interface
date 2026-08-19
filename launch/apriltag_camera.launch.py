@@ -32,25 +32,24 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('device_id', default_value='0',
                               description='/dev/videoN'),
-        DeclareLaunchArgument('width', default_value='640'),
-        DeclareLaunchArgument('height', default_value='480'),
+        DeclareLaunchArgument('width', default_value='800'),
+        DeclareLaunchArgument('height', default_value='600'),
         DeclareLaunchArgument('fps', default_value='30.0'),
         DeclareLaunchArgument(
             'publish_raw', default_value='false',
             description='Raw bgr8 over DDS is the bottleneck; leave it off '
                         'unless a tool needs the uncompressed topic.'),
         DeclareLaunchArgument(
-            'camera_info_url', default_value='',
-            description='Calibration YAML from scripts/calibrate_camera.py. '
-                        'Empty means intrinsics are guessed from '
-                        'vertical_fov_deg and the distance to the tag is only '
-                        'as good as that guess.'),
+            'camera_info_url', default_value='/home/fortiss/camera_800x600.yaml',
+            description='Coarse intrinsics measured off the tag. Enough for '
+                        'orientation and TF; tag distance is +/-10%. Set empty '
+                        'to fall back to the vertical_fov_deg guess.'),
         DeclareLaunchArgument(
             'vertical_fov_deg', default_value='43.0',
             description='Vertical, not horizontal: this sensor keeps the '
                         'vertical field and crops horizontally for 4:3 modes.'),
         DeclareLaunchArgument('tag_family', default_value='36h11'),
-        DeclareLaunchArgument('tag_size', default_value='0.038',
+        DeclareLaunchArgument('tag_size', default_value='0.087',
                               description='metres, outer edge of the black square'),
         DeclareLaunchArgument('camera_frame', default_value='camera_optical_frame'),
         DeclareLaunchArgument('publish_debug_image', default_value='true',

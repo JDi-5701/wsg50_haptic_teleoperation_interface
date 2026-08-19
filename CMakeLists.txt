@@ -25,6 +25,7 @@ install(PROGRAMS
   wsg50_haptic_teleoperation_interface/udp_ros_bridge.py
   wsg50_haptic_teleoperation_interface/udp_ros_bridge_imu.py
   wsg50_haptic_teleoperation_interface/apriltag_ur_teleoperation_node.py
+  wsg50_haptic_teleoperation_interface/apriltag_kuka_teleoperation_node.py
   wsg50_haptic_teleoperation_interface/wsg_command_relay_node.py
   wsg50_haptic_teleoperation_interface/omni_hgi_udp_driver.py
   wsg50_haptic_teleoperation_interface/omni_hgi_haptic_teleop.py
@@ -37,6 +38,7 @@ install(PROGRAMS
 install(PROGRAMS
   scripts/calibrate_camera.py
   scripts/calibrate_from_tag.py
+  scripts/record_tag_views.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

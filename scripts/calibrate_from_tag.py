@@ -14,7 +14,9 @@ Two modes, and they answer different questions.
 
   --mode multiview  MANY views, full intrinsics.
       A single tag gives only 4 points per view, so this needs a lot of views
-      and, above all, TILTED ones. Views square to the lens carry no
+      and, above all, TILTED ones. It is insensitive to tag_size: scaling the
+      object points scales the recovered translations and leaves the focal
+      length and principal point untouched. Views square to the lens carry no
       information separating focal length from distance - a small tag up close
       and a large one far away look identical - so the script refuses views
       that repeat a tilt it already has, and refuses to solve at all if the
@@ -28,8 +30,12 @@ Usage:
     # measure the distance from the LENS to the tag face first, in metres
     python3 calibrate_from_tag.py --mode distance --tag-size 0.038 --distance 0.25
 
-    # or collect views: tilt the tag left, right, up, down, near, far
-    python3 calibrate_from_tag.py --mode multiview --tag-size 0.10 --out cal.yaml
+    # collect views live: tilt the tag left, right, up, down, near, far
+    python3 calibrate_from_tag.py --mode multiview --tag-size 0.087 --out cal.yaml
+
+    # or off a recording from record_tag_views.py, which can be re-run freely
+    python3 calibrate_from_tag.py --mode multiview --from-video session.avi \
+        --tag-size 0.087 --out cal.yaml
 """
 
 import argparse
@@ -46,6 +52,29 @@ FAMILIES = {
     '25h9': cv2.aruco.DICT_APRILTAG_25h9,
     '16h5': cv2.aruco.DICT_APRILTAG_16h5,
 }
+
+
+class VideoSource:
+    """A live camera or a recorded file, behind one read()."""
+
+    def __init__(self, path=None, device=0, width=640, height=480):
+        if path:
+            self.cap = cv2.VideoCapture(path)
+            if not self.cap.isOpened():
+                raise SystemExit(f'Cannot open {path}')
+            self.live = False
+            self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        else:
+            self.cap = open_camera(device, width, height)
+            self.live = True
+            self.width, self.height = width, height
+
+    def read(self):
+        return self.cap.read()
+
+    def release(self):
+        self.cap.release()
 
 
 def open_camera(device, width, height):
@@ -137,8 +166,12 @@ def mode_distance(args):
 # ----------------------------------------------------------------------
 def mode_multiview(args):
     dic, par = make_detector(args.family)
-    cap = open_camera(args.device, args.width, args.height)
+    src = VideoSource(args.from_video or None, args.device, args.width, args.height)
+    args.width, args.height = src.width, src.height
     obj = tag_object_points(args.tag_size)
+    # Only the recovered translations scale with tag_size; calibrateCamera's
+    # focal length and principal point do not. So a wrong tag_size here costs
+    # nothing that matters - unlike in distance mode.
 
     # Provisional intrinsics, only ever used to judge how tilted a view is.
     fx0 = (args.height / 2.0) / math.tan(math.radians(43.0) / 2.0)
@@ -153,10 +186,14 @@ def mode_multiview(args):
           f'are skipped.\n')
 
     t0 = time.time()
-    while len(kept_img) < args.views and time.time() - t0 < args.timeout:
-        ok, frame = cap.read()
+    while len(kept_img) < args.views:
+        if src.live and time.time() - t0 > args.timeout:
+            break
+        ok, frame = src.read()
         if not ok:
-            continue
+            if src.live:
+                continue
+            break                       # end of file
         pts = detect(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), dic, par, args.tag_id)
         if pts is None:
             continue
@@ -176,18 +213,21 @@ def mode_multiview(args):
 
         if any(np.linalg.norm(v - k) < args.min_tilt_sep for k in kept_tilts):
             continue
+        if mean_side(pts) < args.min_side_px:
+            continue                    # too small for trustworthy corners
 
         kept_img.append(pts)
         kept_tilts.append(v)
         print(f'  view {len(kept_img):2d}/{args.views}  tilt {tilt:5.1f} deg '
               f'about {axis:+7.1f} deg')
 
-    cap.release()
+    src.release()
 
     if len(kept_img) < args.min_views:
+        where = args.from_video or f'{args.timeout:.0f}s of live capture'
         raise SystemExit(
-            f'\nOnly {len(kept_img)} distinct views in {args.timeout:.0f}s - '
-            f'need {args.min_views}. The tag has to MOVE: tilt it to different '
+            f'\nOnly {len(kept_img)} distinct views in {where} - need '
+            f'{args.min_views}. The tag has to MOVE: tilt it to different '
             f'angles rather than holding it still.')
 
     spread = float(np.max([np.linalg.norm(a - b)
@@ -275,6 +315,10 @@ def main():
     ap.add_argument('--min-spread', type=float, default=40.0,
                     help='multiview: required spread of tilts, degrees')
     ap.add_argument('--timeout', type=float, default=120.0)
+    ap.add_argument('--from-video', default='',
+                    help='calibrate from a recording instead of the live camera')
+    ap.add_argument('--min-side-px', type=float, default=40.0,
+                    help='skip views where the tag is smaller than this')
     ap.add_argument('--estimate-distortion', action='store_true')
     ap.add_argument('--fix-principal-point', action='store_true')
     args = ap.parse_args()
