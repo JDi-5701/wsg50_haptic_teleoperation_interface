@@ -36,6 +36,7 @@ install(PROGRAMS
 # Install helper scripts
 install(PROGRAMS
   scripts/calibrate_camera.py
+  scripts/calibrate_from_tag.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
