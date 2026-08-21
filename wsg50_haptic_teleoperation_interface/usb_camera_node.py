@@ -69,6 +69,30 @@ class UsbCameraNode(Node):
         # vertical FOV predicts the measured ratio (240/360 = 0.667 against
         # 0.664 measured). 43 deg vertical is 70 deg horizontal at 16:9.
         self.declare_parameter('vertical_fov_deg', 43.0)
+        # EXPOSURE IS WHAT SETS THE FRAME RATE on this sensor. A frame cannot
+        # be shorter than its own exposure, so at 30 fps the exposure ceiling is
+        # 1/30 s. The units here are 100 us, making that ceiling 333, and the
+        # measured knee sits exactly there: 312 sustains 29.8 fps, 400 drops to
+        # 25.0 and 500 to 20.0.
+        #
+        # Left on auto the sensor chases brightness and picks 500 - so it runs
+        # at 20 fps, which is 17 ms of extra latency on every frame plus the
+        # motion blur of a 50 ms exposure. Auto gain stays off either way
+        # (GAIN reads 0 throughout), so exposure is the only control that
+        # matters.
+        #
+        # An earlier note in this file claimed the camera ignored
+        # CAP_PROP_EXPOSURE. It does not - it ignores it while AUTO_EXPOSURE is
+        # 3. Setting AUTO_EXPOSURE to 1 first is what makes it take effect, and
+        # then frame brightness tracks it directly (mean 84 at 78, 157 at 312).
+        self.declare_parameter('auto_exposure', False)
+        self.declare_parameter('exposure', 312)
+        # Deliberately NOT setting CAP_PROP_BUFFERSIZE. Dropping it to 1 halves
+        # the frame rate here (measured 15 fps): with a single buffer the driver
+        # has nowhere to put the next frame while this one is being read. The
+        # default depth of 4 costs nothing as long as we read flat out, which
+        # the timer below arranges - measured 0 of 90 reads returning a queued
+        # frame, i.e. the queue stays empty.
 
         device_id = self.get_parameter('device_id').value
         width = self.get_parameter('width').value
@@ -88,6 +112,7 @@ class UsbCameraNode(Node):
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         self.cap.set(cv2.CAP_PROP_FPS, fps)
+        self._set_exposure(fps)
 
         ok, frame = self.cap.read()
         if not ok:
@@ -109,7 +134,44 @@ class UsbCameraNode(Node):
         self.info_pub = self.create_publisher(CameraInfo, 'camera_info', 1)
 
         self.frame_count = 0
-        self.create_timer(1.0 / fps, self.capture)
+        self.report_t = self.get_clock().now()
+        self.mean_sum = 0.0
+        # Deliberately faster than the frame period. cap.read() blocks until the
+        # sensor has a frame, so a timer that fires early just parks there and we
+        # get each frame the moment it exists; a timer AT the frame period races
+        # the sensor and loses whenever a tick runs long, and the frames it
+        # missed sit in the driver queue going stale. Polling at 2x costs
+        # nothing - the blocking read is the rate limiter either way.
+        self.create_timer(0.5 / fps, self.capture)
+        self.create_timer(5.0, self.report)
+
+    # ------------------------------------------------------------------
+    def _set_exposure(self, fps):
+        """Manual exposure, capped so it cannot hold the frame rate down.
+
+        Order matters: AUTO_EXPOSURE must go to manual BEFORE EXPOSURE is
+        written, or the write is ignored and the sensor keeps chasing
+        brightness.
+        """
+        if self.get_parameter('auto_exposure').value:
+            self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
+            self.get_logger().warn(
+                'Auto exposure is on. It will lengthen the exposure past the '
+                'frame period to brighten the image, which costs frame rate - '
+                'measured 20 fps instead of 30 on this sensor. Set '
+                'auto_exposure:=false to hold 30 fps.')
+            return
+
+        want = int(self.get_parameter('exposure').value)
+        ceiling = int(10000.0 / fps)          # units of 100 us
+        exposure = min(want, ceiling)
+        self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)      # 1 = manual
+        self.cap.set(cv2.CAP_PROP_EXPOSURE, exposure)
+        note = (f' (capped from {want}, which is longer than the {1000.0/fps:.1f} '
+                f'ms frame period and would drop the rate)'
+                if exposure < want else '')
+        self.get_logger().info(
+            f'Manual exposure {exposure} = {exposure/10.0:.1f} ms{note}')
 
     # ------------------------------------------------------------------
     def _build_camera_info(self):
@@ -203,6 +265,19 @@ class UsbCameraNode(Node):
                 self.compressed_pub.publish(cmsg)
 
         self.frame_count += 1
+        self.mean_sum += float(frame[::8, ::8, 1].mean())
+
+    def report(self):
+        """Rate and brightness together, because exposure trades one for the other."""
+        now = self.get_clock().now()
+        dt = (now - self.report_t).nanoseconds / 1e9
+        self.report_t = now
+        if self.frame_count:
+            self.get_logger().info(
+                f'{self.frame_count / dt:.1f} fps, frame mean '
+                f'{self.mean_sum / self.frame_count:.0f}')
+        self.frame_count = 0
+        self.mean_sum = 0.0
 
     def destroy_node(self):
         if hasattr(self, 'cap'):

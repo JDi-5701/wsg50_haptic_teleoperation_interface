@@ -36,6 +36,17 @@ def generate_launch_description():
         DeclareLaunchArgument('height', default_value='600'),
         DeclareLaunchArgument('fps', default_value='30.0'),
         DeclareLaunchArgument(
+            'auto_exposure', default_value='false',
+            description='Auto exposure lengthens the exposure past the frame '
+                        'period to brighten the image and the rate collapses '
+                        'to 20 fps. Off by default; turn it on only to compare.'),
+        DeclareLaunchArgument(
+            'exposure', default_value='312',
+            description='Units of 100 us, so 312 = 31.2 ms. Capped at the frame '
+                        'period (333 at 30 fps) - beyond that the sensor cannot '
+                        'hold the rate. Raise it if the tag is underexposed, '
+                        'and expect to lose frame rate above the cap.'),
+        DeclareLaunchArgument(
             'publish_raw', default_value='false',
             description='Raw bgr8 over DDS is the bottleneck; leave it off '
                         'unless a tool needs the uncompressed topic.'),
@@ -54,6 +65,12 @@ def generate_launch_description():
         DeclareLaunchArgument('camera_frame', default_value='camera_optical_frame'),
         DeclareLaunchArgument('publish_debug_image', default_value='true',
                               description='Annotated jpeg on tag_image'),
+        DeclareLaunchArgument(
+            'corner_refinement', default_value='subpix',
+            description="subpix | apriltag | none. apriltag refines better but "
+                        "costs 24.5 ms a frame against subpix's 4.6, which does "
+                        "not fit in a 33 ms frame period; the pose difference "
+                        "is 0.7 mm."),
 
         Node(
             package='wsg50_haptic_teleoperation_interface',
@@ -65,6 +82,8 @@ def generate_launch_description():
                 'width': LaunchConfiguration('width'),
                 'height': LaunchConfiguration('height'),
                 'fps': LaunchConfiguration('fps'),
+                'auto_exposure': LaunchConfiguration('auto_exposure'),
+                'exposure': LaunchConfiguration('exposure'),
                 'publish_raw': LaunchConfiguration('publish_raw'),
                 'publish_compressed': True,
                 'camera_info_url': LaunchConfiguration('camera_info_url'),
@@ -83,6 +102,7 @@ def generate_launch_description():
                 'tag_size': LaunchConfiguration('tag_size'),
                 'use_compressed': True,
                 'publish_debug_image': LaunchConfiguration('publish_debug_image'),
+                'corner_refinement': LaunchConfiguration('corner_refinement'),
                 'publish_tf': True,
                 'camera_frame': LaunchConfiguration('camera_frame'),
             }],

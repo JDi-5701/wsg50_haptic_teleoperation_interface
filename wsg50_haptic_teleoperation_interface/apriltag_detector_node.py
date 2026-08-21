@@ -34,6 +34,7 @@ Standalone:
 """
 
 import math
+import time
 
 import cv2
 import numpy as np
@@ -48,6 +49,12 @@ FAMILIES = {
     '36h10': cv2.aruco.DICT_APRILTAG_36h10,
     '25h9': cv2.aruco.DICT_APRILTAG_25h9,
     '16h5': cv2.aruco.DICT_APRILTAG_16h5,
+}
+
+REFINERS = {
+    'subpix': cv2.aruco.CORNER_REFINE_SUBPIX,
+    'apriltag': cv2.aruco.CORNER_REFINE_APRILTAG,
+    'none': cv2.aruco.CORNER_REFINE_NONE,
 }
 
 
@@ -100,23 +107,51 @@ class AprilTagDetectorNode(Node):
         self.declare_parameter('max_reprojection_error', 3.0)
         # Gamma applied before detection. <1 lifts shadows, which matters when
         # the tag is backlit: measured against a window, raw frames detected in
-        # 14% of frames and gamma 0.45 in 100%. Manual exposure was no help -
-        # this camera ignores CAP_PROP_EXPOSURE, its frame mean staying at 110
-        # whatever it is set to. 1.0 disables.
+        # 14% of frames and gamma 0.45 in 100%. 1.0 disables.
+        #
+        # An earlier note here said manual exposure was no help because the
+        # camera ignored CAP_PROP_EXPOSURE. That was wrong: the write is ignored
+        # only while AUTO_EXPOSURE is 3, and the camera node now switches to
+        # manual first. Exposure is the better tool for an underexposed tag,
+        # since gamma lifts the noise along with the shadows - reach for it
+        # before this.
         self.declare_parameter('gamma', 1.0)
         # Retried only when the first pass finds nothing, so a well-exposed
         # scene pays nothing for it. 0 disables the retry.
         self.declare_parameter('gamma_fallback', 0.45)
+        # The pose is made of the corners, so how they are refined matters -
+        # but measured on this camera, with the tag at 486 mm, it matters far
+        # less than it costs:
+        #
+        #     apriltag   24.5 ms/frame   jitter 0.029 mm   120/120 found
+        #     subpix      4.6 ms/frame   jitter 0.058 mm   120/120 found
+        #     none        4.6 ms/frame   jitter 0.000 mm   120/120 found
+        #
+        # The two refiners disagree by 0.72 mm on the pose, against the +/-49 mm
+        # of bias the guessed fx already contributes at that distance. The extra
+        # jitter subpix brings is 0.029 mm, which at position_scale 0.2 reaches
+        # the arm as 0.006 mm - nothing. And apriltag's 24.5 ms did not fit in
+        # the 33 ms frame period once decode and the debug jpeg were added, so
+        # the detector was dropping 12% of frames and running late on the rest.
+        #
+        # 'none' is not the free win its 0.000 mm jitter suggests: unrefined
+        # corners are quantised to whole pixels, so they simply do not move.
+        # Same cost as subpix, worse corners.
+        self.declare_parameter('corner_refinement', 'subpix')
 
         family = self.get_parameter('tag_family').value
         if family not in FAMILIES:
             raise RuntimeError(
                 f'Unknown family {family}; have {sorted(FAMILIES)}')
         self.dictionary = cv2.aruco.Dictionary_get(FAMILIES[family])
+
+        refine = str(self.get_parameter('corner_refinement').value).lower()
+        if refine not in REFINERS:
+            raise RuntimeError(
+                f'Unknown corner_refinement {refine}; have {sorted(REFINERS)}')
         self.params = cv2.aruco.DetectorParameters_create()
-        # Corner accuracy is what the pose is made of, so refine with the
-        # AprilTag refiner rather than the default contour corners.
-        self.params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_APRILTAG
+        self.params.cornerRefinementMethod = REFINERS[refine]
+        self.refine_name = refine
 
         self.tag_size = float(self.get_parameter('tag_size').value)
         self.camera_frame = self.get_parameter('camera_frame').value
@@ -165,9 +200,11 @@ class AprilTagDetectorNode(Node):
         self.rejected = 0
         self.create_timer(5.0, self.report)
 
+        self.proc_ms = []
         self.get_logger().info(
             f'AprilTag detector up: family {family}, tag {self.tag_size*1000:.0f} mm, '
-            f'reading {source}. Waiting for camera_info.')
+            f'corners refined by {self.refine_name}, reading {source}. '
+            f'Waiting for camera_info.')
 
     # ------------------------------------------------------------------
     def info_callback(self, msg):
@@ -199,6 +236,7 @@ class AprilTagDetectorNode(Node):
         self.frames += 1
         if self.camera_matrix is None:
             return
+        t_start = time.perf_counter()
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         if self.lut is not None:
@@ -267,6 +305,7 @@ class AprilTagDetectorNode(Node):
                         (0, 255, 0), 2)
 
         self.detections_pub.publish(pose_array)
+        self.proc_ms.append((time.perf_counter() - t_start) * 1000.0)
 
         if debug is not None:
             ok, buf = cv2.imencode('.jpg', debug,
@@ -310,9 +349,17 @@ class AprilTagDetectorNode(Node):
         if self.fallback_hits:
             note += (f', {self.fallback_hits} only found after gamma - the '
                      f'scene is underexposing the tag')
+        # Per-frame cost against the frame period is what says whether this node
+        # is keeping up. Once it exceeds the period the camera's frames queue,
+        # every pose arrives late and some are dropped outright.
+        if self.proc_ms:
+            ms = sorted(self.proc_ms)
+            note += (f', {ms[len(ms)//2]:.1f} ms/frame median, '
+                     f'{ms[int(len(ms)*0.95)]:.1f} ms p95')
         self.get_logger().info(
             f'{self.frames} frames, {self.hits} tag sightings{note} (last 5 s)')
         self.frames = self.hits = self.rejected = self.fallback_hits = 0
+        self.proc_ms = []
 
 
 def main(args=None):
