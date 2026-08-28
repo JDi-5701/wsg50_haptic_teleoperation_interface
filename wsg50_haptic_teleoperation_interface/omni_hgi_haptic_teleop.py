@@ -18,8 +18,12 @@ is the slowest link in it.
 Coil mapping - the fingertip's shear becomes coil drive, its normal force
 becomes knob resistance:
 
-    /coil_command.x = clamp(Fx * coil_ratio, +/- coil_max_duty)
-    /coil_command.y = clamp(Fy * coil_ratio, +/- coil_max_duty)
+    /coil_command.x = clamp(Fy * coil_ratio_x, +/- coil_max_duty)
+    /coil_command.y = clamp(Fx * coil_ratio_y, +/- coil_max_duty)
+
+The fingertip's x and y drive the coils' y and x: the Paxini sensor frame and
+the coil frame sit 90 degrees apart on the hardware, so feeding them straight
+through put shear along the wrong coil.
     /coil_command.z = clamp(Fz * knob_force_ratio, +/- knob_force_max)
 
 x and y are normalised coil duty: the board clamps |value| to 1.0 in
@@ -57,7 +61,7 @@ class OmniHgiHapticTeleop(Node):
         # which was working on the hardware. position_factor is now mm of
         # gripper width per MILLIRADIAN, since that is what the reworked
         # firmware sends, but the integration itself is unchanged.
-        self.declare_parameter('position_factor', 0.013)
+        self.declare_parameter('position_factor', 0.022)
         self.declare_parameter('position_jump_threshold', 1000)
         self.declare_parameter('gripper_min_width', 10.0)
         self.declare_parameter('gripper_max_width', 105.0)
@@ -70,7 +74,13 @@ class OmniHgiHapticTeleop(Node):
         self.declare_parameter('command_deadband', 0.0)
 
         # --- fingertip -> coils ---
-        self.declare_parameter('coil_ratio', 0.08)
+        # One gain per coil, not one shared gain: the two axes do not have the
+        # same magnet geometry or the same mechanical advantage, so matching
+        # felt strength needs them set independently. Named for the COIL each
+        # drives, which is what you tune against, not for the force that feeds
+        # it - see wrench_callback for the axis swap.
+        self.declare_parameter('coil_ratio_x', 0.08)
+        self.declare_parameter('coil_ratio_y', 0.08)
         self.declare_parameter('coil_max_duty', 0.8)
         self.declare_parameter('knob_force_ratio', 1.0)
         self.declare_parameter('knob_force_max', 5.0)
@@ -82,7 +92,8 @@ class OmniHgiHapticTeleop(Node):
         self.gripper_max_width = self.get_parameter('gripper_max_width').value
         self.gripper_velocity = self.get_parameter('gripper_velocity').value
 
-        self.coil_ratio = self.get_parameter('coil_ratio').value
+        self.coil_ratio_x = self.get_parameter('coil_ratio_x').value
+        self.coil_ratio_y = self.get_parameter('coil_ratio_y').value
         self.coil_max_duty = self.get_parameter('coil_max_duty').value
         self.knob_force_ratio = self.get_parameter('knob_force_ratio').value
         self.knob_force_max = self.get_parameter('knob_force_max').value
@@ -119,12 +130,23 @@ class OmniHgiHapticTeleop(Node):
             self.get_logger().warn(
                 f'Large position jump detected: {knob_position_delta}')
         else:
-            self.position_change = -1 * self.position_factor * knob_position_delta
+            # Accumulate rather than overwrite. The knob arrives at whatever
+            # rate the board and the WiFi manage, which is not the control
+            # rate, so two packets can land between two control ticks and
+            # overwriting would silently drop one of them.
+            self.position_change += -1 * self.position_factor * knob_position_delta
 
         self.knob_position_last = knob_position_current
 
     def control_loop(self):
-        self.gripper_target -= self.position_change
+        applied = self.position_change
+        self.gripper_target -= applied
+        # Each knob movement must be applied exactly once. Leaving it set meant
+        # the loop kept re-applying the last delta at the control rate until
+        # the next packet arrived, so the gripper carried on moving after the
+        # knob had stopped, by an amount that depended on packet timing - a
+        # 90 ms WiFi gap at 100 Hz applied the same delta nine times.
+        self.position_change = 0.0
         self.gripper_target = clamp(self.gripper_target,
                                     self.gripper_min_width,
                                     self.gripper_max_width)
@@ -140,24 +162,29 @@ class OmniHgiHapticTeleop(Node):
         self.gripper_cmd_pub.publish(cmd)
         self.last_commanded = self.gripper_target
 
-        if abs(self.position_change) > 0:
-            self.get_logger().info(
-                f'Position change: {self.position_change:.2f} mm')
-            self.get_logger().info(
-                f'Gripper target: {self.gripper_target:.2f} mm')
+        # Debug, not info: these fire on every knob movement, so turning the
+        # knob scrolls the console faster than it can be read and buries the
+        # startup and fault lines that matter.
+        if abs(applied) > 0:
+            self.get_logger().debug(
+                f'Position change: {applied:.2f} mm, '
+                f'gripper target: {self.gripper_target:.2f} mm')
 
     # ---------------- fingertip -> coils ----------------
     def wrench_callback(self, msg):
         f = msg.wrench.force
 
-        def shear(v):
+        def shear(v, ratio):
             if abs(v) < self.coil_deadzone:
                 return 0.0
-            return clamp(v * self.coil_ratio, -self.coil_max_duty, self.coil_max_duty)
+            return clamp(v * ratio, -self.coil_max_duty, self.coil_max_duty)
 
         out = Vector3()
-        out.x = shear(f.x)
-        out.y = shear(f.y)
+        # Swapped: the fingertip's x is the coils' y. Passing them straight
+        # through drove shear along the axis at right angles to the one the
+        # finger was actually being pushed along.
+        out.x = shear(f.y, self.coil_ratio_x)
+        out.y = shear(f.x, self.coil_ratio_y)
         # The sensor reports Fz unsigned, so this is push-only in practice;
         # clamp both ends anyway so a signed firmware cannot command a runaway.
         out.z = clamp(f.z * self.knob_force_ratio,

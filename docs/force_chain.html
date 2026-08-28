@@ -1,0 +1,917 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="OmniHGI 触觉回路：指尖 Fz 到旋钮电机 q 轴电压的逐级传递链，参数可调，含 DM3510 电流额定。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%8E%9B%EF%B8%8F%3C/text%3E%3C/svg%3E">
+<title>OmniHGI 力传递链</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+
+<style>
+:root{
+  color-scheme: light;
+  --bg:#eef1f5; --surface:#fbfcfd; --surface-2:#f4f7fa;
+  --ink:#0f151b; --ink-2:#4b565f; --muted:#7d8892;
+  --grid:#dee4ea; --axis:#c2cad2; --hair:rgba(15,21,27,.11);
+  --stage-1:#86b6ef; --stage-2:#5598e7; --stage-3:#2a78d6; --stage-4:#1c5cab; --stage-5:#104281;
+  --crit:#d03b3b; --good:#0ca30c; --warn:#8a5a00;
+  --focus:#2a78d6;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --cond:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --bg:#0a0e12; --surface:#151b21; --surface-2:#1b232a;
+    --ink:#f2f5f8; --ink-2:#aeb9c3; --muted:#78838d;
+    --grid:#222b33; --axis:#333d46; --hair:rgba(255,255,255,.11);
+    --stage-1:#184f95; --stage-2:#256abf; --stage-3:#3987e5; --stage-4:#6da7ec; --stage-5:#9ec5f4;
+    --crit:#d03b3b; --good:#0ca30c; --warn:#fab219;
+    --focus:#6da7ec;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#0a0e12; --surface:#151b21; --surface-2:#1b232a;
+  --ink:#f2f5f8; --ink-2:#aeb9c3; --muted:#78838d;
+  --grid:#222b33; --axis:#333d46; --hair:rgba(255,255,255,.11);
+  --stage-1:#184f95; --stage-2:#256abf; --stage-3:#3987e5; --stage-4:#6da7ec; --stage-5:#9ec5f4;
+  --crit:#d03b3b; --good:#0ca30c; --warn:#fab219;
+  --focus:#6da7ec;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:var(--sans); font-size:15px; line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+:focus-visible{outline:2px solid var(--focus); outline-offset:2px}
+.wrap{max-width:1440px; margin:0 auto; padding:28px 22px 64px}
+
+/* ---------- masthead ---------- */
+.masthead{display:flex; flex-direction:column; gap:10px; padding-bottom:22px; border-bottom:1px solid var(--hair)}
+.eyebrow{font-family:var(--cond); font-weight:600; font-size:12px; letter-spacing:.11em; text-transform:uppercase; color:var(--muted)}
+h1{font-size:clamp(26px,3.1vw,38px); line-height:1.12; margin:0; font-weight:600; letter-spacing:-.015em; text-wrap:balance}
+.lede{margin:0; max-width:64ch; color:var(--ink-2); font-size:15.5px}
+.lede code{font-family:var(--mono); font-size:13.5px; background:var(--surface-2); padding:1px 5px; border:1px solid var(--hair)}
+
+/* ---------- probe bar ---------- */
+.probebar{
+  position:sticky; top:0; z-index:20; margin:0 -22px 0; padding:14px 22px;
+  background:var(--bg); border-bottom:1px solid var(--hair);
+  display:flex; flex-wrap:wrap; gap:20px 28px; align-items:flex-end;
+}
+.probe-ctl{flex:1 1 300px; min-width:260px; display:flex; flex-direction:column; gap:6px}
+.probe-ctl .row{display:flex; justify-content:space-between; align-items:baseline; gap:12px}
+.probe-lab{font-family:var(--cond); font-weight:600; font-size:12px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted)}
+.probe-val{font-family:var(--sans); font-weight:600; font-size:30px; line-height:1; letter-spacing:-.02em}
+.probe-val .u{font-size:15px; font-weight:500; color:var(--ink-2); margin-left:3px}
+input[type=range]{width:100%; accent-color:var(--stage-3); height:22px; margin:0}
+.hero{display:flex; gap:26px; flex-wrap:wrap}
+.hero-item{display:flex; flex-direction:column; gap:2px; min-width:96px}
+.hero-num{font-family:var(--sans); font-weight:600; font-size:27px; line-height:1.05; letter-spacing:-.02em}
+.hero-num .u{font-size:13px; font-weight:500; color:var(--ink-2); margin-left:2px}
+.hero-cap{font-family:var(--cond); font-weight:500; font-size:11.5px; letter-spacing:.07em; text-transform:uppercase; color:var(--muted)}
+.hero-num.sat{color:var(--crit)}
+
+/* ---------- chain rail ---------- */
+.chain{display:flex; flex-wrap:wrap; align-items:stretch; gap:8px; margin:20px 0 4px}
+.chip{
+  flex:1 1 150px; min-width:146px; background:var(--surface); border:1px solid var(--hair);
+  padding:9px 11px 10px; display:flex; flex-direction:column; gap:3px;
+}
+.chip .k{display:flex; align-items:center; gap:7px}
+.chip .key{width:16px; height:2px; flex:none}
+.chip .no{font-family:var(--mono); font-size:11px; color:var(--muted); font-weight:500}
+.chip .id{font-family:var(--mono); font-size:12px; font-weight:500; color:var(--ink-2); overflow-wrap:anywhere}
+.chip .v{font-family:var(--sans); font-weight:600; font-size:20px; letter-spacing:-.01em; font-variant-numeric:tabular-nums}
+.chip .v .u{font-size:12px; font-weight:500; color:var(--ink-2); margin-left:2px}
+.chip .n{font-size:11.5px; color:var(--muted); font-family:var(--cond); letter-spacing:.03em}
+/* the terminal chip is the physical outcome, not another line of code -
+   it stays outside the stage ramp so the five coloured chips keep meaning
+   "a step in the software chain". */
+.chip.terminal{background:var(--surface-2); border-style:dashed}
+.chip.terminal .key{background:var(--ink-2); height:0; border-top:2px dashed var(--ink-2); width:16px}
+.chip .v.over{color:var(--crit)}
+.arrow{align-self:center; color:var(--muted); font-size:15px; flex:none}
+@media(max-width:900px){.arrow{display:none}}
+
+/* ---------- workbench ---------- */
+.workbench{display:grid; grid-template-columns:308px minmax(0,1fr); gap:22px; margin-top:18px; align-items:start}
+@media(max-width:1080px){.workbench{grid-template-columns:1fr}}
+
+.rail{position:sticky; top:118px; display:flex; flex-direction:column; gap:14px; max-height:calc(100vh - 140px); overflow:auto; padding-right:2px}
+@media(max-width:1080px){.rail{position:static; max-height:none; overflow:visible}}
+.group{background:var(--surface); border:1px solid var(--hair)}
+.group > h3{
+  margin:0; padding:9px 12px; border-bottom:1px solid var(--hair);
+  font-family:var(--cond); font-weight:600; font-size:11.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-2);
+  display:flex; justify-content:space-between; gap:8px; align-items:baseline;
+}
+.group > h3 .src{font-family:var(--mono); font-size:10px; letter-spacing:0; text-transform:none; color:var(--muted); font-weight:400}
+.group .body{padding:11px 12px 13px; display:flex; flex-direction:column; gap:13px}
+.param{display:flex; flex-direction:column; gap:5px}
+.param .top{display:flex; justify-content:space-between; align-items:baseline; gap:8px}
+.param .name{font-family:var(--mono); font-size:12px; color:var(--ink-2); overflow-wrap:anywhere}
+.param .num{font-family:var(--mono); font-size:13px; font-weight:500; font-variant-numeric:tabular-nums}
+.param .num.mod{color:var(--focus)}
+.fact{display:flex; justify-content:space-between; gap:10px; font-size:12.5px; color:var(--ink-2)}
+.fact .name{font-family:var(--mono); font-size:12px}
+.fact .num{font-family:var(--mono); font-size:12.5px; color:var(--muted); font-variant-numeric:tabular-nums}
+.hint{font-size:11.5px; color:var(--muted); line-height:1.45}
+
+.btnrow{display:flex; flex-wrap:wrap; gap:6px}
+button{
+  font-family:var(--sans); font-size:12.5px; font-weight:500; color:var(--ink);
+  background:var(--surface); border:1px solid var(--hair); padding:6px 10px; cursor:pointer;
+  border-radius:2px;
+}
+button:hover{background:var(--surface-2)}
+button[aria-pressed="true"]{background:var(--ink); color:var(--surface); border-color:var(--ink)}
+.toggles{display:flex; flex-wrap:wrap; gap:6px; align-items:center}
+label.check{display:flex; gap:7px; align-items:center; font-size:12.5px; color:var(--ink-2); cursor:pointer}
+label.check input{accent-color:var(--stage-3); width:15px; height:15px}
+
+/* ---------- panels ---------- */
+.plots{background:var(--surface); border:1px solid var(--hair)}
+.plotshead{display:flex; justify-content:space-between; align-items:baseline; gap:12px; padding:10px 14px; border-bottom:1px solid var(--hair); flex-wrap:wrap}
+.plotshead .t{font-family:var(--cond); font-weight:600; font-size:11.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-2)}
+.panel{border-bottom:1px solid var(--hair)}
+.panel:last-of-type{border-bottom:0}
+.panel svg{display:block; width:100%}
+.axisstrip svg{display:block; width:100%}
+.plotwrap{touch-action:pan-y}
+
+svg text{font-family:var(--cond); fill:var(--muted)}
+svg .tick{font-size:10px; font-variant-numeric:tabular-nums}
+svg .stagename{font-family:var(--sans); font-size:12px; font-weight:600; fill:var(--ink)}
+svg .stageid{font-family:var(--mono); font-size:11px; fill:var(--muted)}
+svg .stageno{font-family:var(--mono); font-size:10px; fill:var(--muted)}
+svg .probeval{font-family:var(--sans); font-size:19px; font-weight:600; fill:var(--ink)}
+svg .probeunit{font-family:var(--cond); font-size:11px; fill:var(--ink-2)}
+svg .endlab{font-family:var(--mono); font-size:10.5px; fill:var(--muted); font-variant-numeric:tabular-nums}
+svg .limlab{font-family:var(--cond); font-size:10px; font-weight:600; fill:var(--crit)}
+svg .reflab{font-family:var(--cond); font-size:10px; fill:var(--muted)}
+svg .grid{stroke:var(--grid); stroke-width:1}
+svg .axis{stroke:var(--axis); stroke-width:1}
+svg .curve{fill:none; stroke-width:2; stroke-linejoin:round; stroke-linecap:round}
+svg .band{stroke:none; opacity:.18}
+svg .refcurve{fill:none; stroke:var(--muted); stroke-width:1.5; stroke-dasharray:4 3; opacity:.75}
+svg .limline{stroke:var(--crit); stroke-width:1.5; stroke-dasharray:5 3; opacity:.9}
+svg .ratline{stroke-width:1.5; opacity:.85}
+svg .ratline.warn{stroke:var(--warn)} svg .ratline.crit{stroke:var(--crit)}
+svg .ratlab{font-family:var(--cond); font-size:10px; font-weight:600}
+svg .ratlab.warn{fill:var(--warn)} svg .ratlab.crit{fill:var(--crit)}
+svg .crosshair{stroke:var(--ink-2); stroke-width:1; opacity:.55}
+svg .contactline{stroke:var(--axis); stroke-width:1}
+svg .dot{stroke:var(--surface); stroke-width:2}
+.c1{stroke:var(--stage-1)} .c2{stroke:var(--stage-2)} .c3{stroke:var(--stage-3)} .c4{stroke:var(--stage-4)} .c5{stroke:var(--stage-5)}
+.f1{fill:var(--stage-1)} .f2{fill:var(--stage-2)} .f3{fill:var(--stage-3)} .f4{fill:var(--stage-4)} .f5{fill:var(--stage-5)}
+.b1{background:var(--stage-1)} .b2{background:var(--stage-2)} .b3{background:var(--stage-3)} .b4{background:var(--stage-4)} .b5{background:var(--stage-5)}
+
+/* ---------- tiles ---------- */
+.tiles{display:grid; grid-template-columns:repeat(auto-fit,minmax(178px,1fr)); gap:10px; margin-top:22px}
+.tile{background:var(--surface); border:1px solid var(--hair); padding:12px 13px 13px; display:flex; flex-direction:column; gap:3px}
+.tile .cap{font-family:var(--cond); font-weight:500; font-size:11.5px; letter-spacing:.07em; text-transform:uppercase; color:var(--muted)}
+.tile .val{font-family:var(--sans); font-weight:600; font-size:26px; letter-spacing:-.02em; line-height:1.1}
+.tile .val .u{font-size:13px; font-weight:500; color:var(--ink-2); margin-left:2px}
+.tile .sub{font-size:11.5px; color:var(--muted)}
+.tile .sub.warnish{color:var(--crit); font-weight:500}
+.tile .sub.okish{color:var(--good); font-weight:500}
+
+/* ---------- table ---------- */
+.tablecard{margin-top:22px; background:var(--surface); border:1px solid var(--hair)}
+.tablecard header{display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 14px; border-bottom:1px solid var(--hair); flex-wrap:wrap}
+.tablecard header .t{font-family:var(--cond); font-weight:600; font-size:11.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-2)}
+.tablescroll{overflow-x:auto}
+table{border-collapse:collapse; width:100%; min-width:640px; font-size:13px}
+th,td{padding:6px 12px; text-align:right; font-family:var(--mono); font-variant-numeric:tabular-nums; white-space:nowrap}
+th{font-family:var(--cond); font-weight:600; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); text-align:right; border-bottom:1px solid var(--hair)}
+th:first-child,td:first-child{text-align:left}
+tbody tr:nth-child(even){background:var(--surface-2)}
+td.sat{color:var(--crit)}
+
+/* ---------- notes ---------- */
+.notes{margin-top:26px; display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px}
+.note{background:var(--surface); border:1px solid var(--hair); padding:14px 15px 15px}
+.note h4{margin:0 0 6px; font-size:14.5px; font-weight:600; display:flex; gap:8px; align-items:baseline}
+.note h4 .mk{font-family:var(--mono); font-size:11px; color:var(--muted); font-weight:500}
+.note p{margin:0; font-size:13.5px; line-height:1.6; color:var(--ink-2)}
+.note code{font-family:var(--mono); font-size:12.5px; background:var(--surface-2); padding:1px 4px; border:1px solid var(--hair)}
+.note.flag h4 .mk{color:var(--crit)}
+
+footer{margin-top:30px; padding-top:16px; border-top:1px solid var(--hair); font-size:12.5px; color:var(--muted); display:flex; flex-wrap:wrap; gap:6px 20px}
+footer code{font-family:var(--mono); font-size:12px}
+
+@media (prefers-reduced-motion: reduce){*{transition:none !important; animation:none !important}}
+.sr{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">OmniHGI · 触觉反馈回路</div>
+    <h1>从指尖 F<sub>z</sub> 到旋钮电机的 q 轴电压</h1>
+    <p class="lede">Paxini 指尖测到的法向力，要经过 PC 侧限幅、固件里的线性预处理与对数压缩、再由 SimpleFOC 换算成相电压，才变成手指感受到的阻力。拖动探针看每一级的数值，改左侧参数看整条曲线怎么动；第五格上的两条横线是 DM3510 自己的额定与堵转电流。参考值取自 <code>omni_hgi.launch.py</code> 与 <code>motor_task.cpp</code>。</p>
+  </header>
+
+  <div class="probebar">
+    <div class="probe-ctl">
+      <div class="row">
+        <span class="probe-lab">探针 · 指尖 F<sub>z</sub></span>
+        <span class="probe-val" id="probeVal">2.00<span class="u">N</span></span>
+      </div>
+      <input type="range" id="probe" min="0" max="25.5" step="0.05" value="2" aria-label="指尖法向力 Fz，牛顿">
+    </div>
+    <div class="hero">
+      <div class="hero-item">
+        <span class="hero-num" id="heroUq">—<span class="u">V</span></span>
+        <span class="hero-cap">q 轴电压 U<sub>q</sub></span>
+      </div>
+      <div class="hero-item">
+        <span class="hero-num" id="heroCur">—<span class="u">A</span></span>
+        <span class="hero-cap">实际相电流</span>
+      </div>
+      <div class="hero-item">
+        <span class="hero-num" id="heroTq">—<span class="u">N·m</span></span>
+        <span class="hero-cap">输出力矩</span>
+      </div>
+      <div class="hero-item">
+        <span class="hero-num" id="heroPct">—<span class="u">%</span></span>
+        <span class="hero-cap">占额定电流</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="chain" id="chain"></div>
+
+  <div class="workbench">
+
+    <aside class="rail" aria-label="参数">
+      <div class="group">
+        <h3>预设<span class="src">preset</span></h3>
+        <div class="body">
+          <div class="btnrow" id="presets"></div>
+          <p class="hint" id="presetHint">全部参数按固件与 launch 文件的当前默认值。</p>
+        </div>
+      </div>
+
+      <div class="group">
+        <h3>PC · 策略节点<span class="src">omni_hgi_haptic_teleop.py</span></h3>
+        <div class="body" id="grpPC"></div>
+      </div>
+
+      <div class="group">
+        <h3>ESP32 · computeForceFeedback<span class="src">motor_task.cpp:94</span></h3>
+        <div class="body" id="grpFW"></div>
+      </div>
+
+      <div class="group">
+        <h3>电机 · SimpleFOC 2.2.1<span class="src">motor_task.cpp:256</span></h3>
+        <div class="body" id="grpMotor"></div>
+      </div>
+
+      <div class="group">
+        <h3>DM3510 · 规格表<span class="src">datasheet</span></h3>
+        <div class="body">
+          <div class="fact"><span class="name">相间电阻</span><span class="num">8.8 Ω</span></div>
+          <div class="fact"><span class="name">每相电阻 (÷2)</span><span class="num">4.4 Ω</span></div>
+          <div class="fact"><span class="name">额定电流</span><span class="num">0.53 A</span></div>
+          <div class="fact"><span class="name">堵转电流</span><span class="num">0.8 A</span></div>
+          <div class="fact"><span class="name">额定 / 堵转力矩</span><span class="num">0.11 / 0.16 N·m</span></div>
+          <div class="fact"><span class="name">扭矩常数</span><span class="num">0.2 N·m/A</span></div>
+          <div class="fact"><span class="name">极对数</span><span class="num">11</span></div>
+          <p class="hint">规格表给的是<strong>相间</strong>电阻，因为中性点引不出来，那是外面唯一测得到的。SimpleFOC 要的是<strong>每相</strong>电阻，两者差 2 倍。</p>
+        </div>
+      </div>
+
+      <div class="group">
+        <h3>传感器 · 固定量<span class="src">paxini…node.py:200</span></h3>
+        <div class="body">
+          <div class="fact"><span class="name">量化步长</span><span class="num">0.1 N</span></div>
+          <div class="fact"><span class="name">量程</span><span class="num">0 – 25.5 N</span></div>
+          <div class="fact"><span class="name">发布率</span><span class="num">30 Hz</span></div>
+          <p class="hint">芯片合力的 F<sub>z</sub> 是<strong>单字节无符号</strong>，所以只有“压”没有“拉”，第一级曲线是 0.1 N 的台阶。</p>
+        </div>
+      </div>
+    </aside>
+
+    <main>
+      <div class="plots">
+        <div class="plotshead">
+          <span class="t">逐级传递曲线 · 横轴同为指尖 F<sub>z</sub></span>
+          <div class="toggles">
+            <label class="check"><input type="checkbox" id="tRef" checked> 固件默认参考线</label>
+            <label class="check"><input type="checkbox" id="tPac" checked> Pacinian 振动包络</label>
+            <span class="btnrow" id="xranges"></span>
+          </div>
+        </div>
+        <div class="plotwrap" id="plotwrap"></div>
+        <div class="axisstrip" id="axisstrip"></div>
+      </div>
+
+      <div class="tiles" id="tiles"></div>
+
+      <div class="tablecard">
+        <header>
+          <span class="t">数值表 · 每一级的读数</span>
+          <span class="btnrow">
+            <button id="copyBtn" type="button">复制当前参数</button>
+            <button id="tableBtn" type="button" aria-pressed="true">收起</button>
+          </span>
+        </header>
+        <div class="tablescroll" id="tablescroll"></div>
+      </div>
+    </main>
+  </div>
+
+  <section class="notes" aria-label="读图要点">
+    <div class="note flag">
+      <h4><span class="mk">发现 01</span>板上的 CLAMP_MAX 是死代码</h4>
+      <p>要让 <code>force_human</code> 到 1.0，需要 F<sub>z</sub> ≈ 28 N；而 PC 侧 <code>knob_force_max</code> 早在 5 N 就截断了。真正决定“最大手感”的是 launch 参数，不是固件常量——把 <code>CLAMP_MAX</code> 拉到 0.5 试试，第四级曲线纹丝不动。</p>
+    </div>
+    <div class="note flag">
+      <h4><span class="mk">发现 02</span>电压有余量，电流没有</h4>
+      <p>默认参数下 0 → 5 N 全程 U<sub>q</sub> 只走 0.10 → 2.39 V，看着离 6 V 的 <code>voltage_limit</code> 还很远。但 2.39 V 除以真实的 4.4 Ω 每相电阻就是 <strong>0.54 A</strong>——正好压在 0.53 A 的额定连续电流上。<strong>余量在电压上，不在电流上</strong>：想提高辨识度只能重塑曲线形状，不能抬天花板。</p>
+    </div>
+    <div class="note">
+      <h4><span class="mk">发现 03</span>抬 ratio 不等于变强</h4>
+      <p><code>knob_force_ratio</code> 只是把工作点沿同一条压平的曲线往右推，很快就撞上 <code>knob_force_max</code>。要真正提高中段分辨力，得<strong>收窄</strong>可用量程再把曲线铺开——“只抬 knob_force_max”预设是反例，“窄量程高分辨”是正例。</p>
+    </div>
+    <div class="note">
+      <h4><span class="mk">发现 04</span>Pacinian 包络是欠采样的</h4>
+      <p>150 Hz 正弦叠加在电机环上，而电机环约 1 kHz，一个周期只有约 6.7 个采样点——图上的包络画的是理论上下界，实际输出是有明显混叠的锯齿。<code>pacinian_start_time</code> 还是 static 且从不复位。</p>
+    </div>
+    <div class="note flag">
+      <h4><span class="mk">发现 06</span>voltage_limit 不保护电机</h4>
+      <p><code>voltage_limit = 6 V</code> 允许 6 / 4.4 = <strong>1.36 A</strong>，是额定 0.53 A 的 2.6 倍、堵转 0.8 A 的 1.7 倍。SimpleFOC 限的是电压，不是电流；这颗电机最高退磁温度只有 120 ℃。按堵转电流反推，安全上限是 <code>voltage_limit = 3.5</code>。</p>
+    </div>
+    <div class="note flag">
+      <h4><span class="mk">发现 07</span>phase_resistance 填的是相间值</h4>
+      <p><code>BLDCMotor(11, 8.8)</code> 里的 8.8 是规格表的<strong>相间</strong>电阻——中性点引不出来，那是外面唯一测得到的量。SimpleFOC 要的是<strong>每相</strong>电阻，星形绕组下是它的一半，4.4 Ω。后果不是电机行为不对，而是 <code>motor_command</code> 这个数<strong>不是安培</strong>：实际电流是它的两倍，没法直接和规格表比。改成 4.4 后输出整体减半，增益要相应加倍。</p>
+    </div>
+    <div class="note flag">
+      <h4><span class="mk">发现 05</span>Z 轴没有板上看门狗</h4>
+      <p><code>motor_task.cpp:269</code> 的 500 ms 断电看门狗只清 <code>coil_force_x/y</code>，不清 <code>tcp_force</code>。PC 整个挂掉时，旋钮会按最后一个 F<sub>z</sub> 一直上力矩。这是 Z 轴与 XY 轴之间真实存在的安全性不对称。</p>
+    </div>
+    <div class="note">
+      <h4><span class="mk">时序</span>端到端约 50–60 ms</h4>
+      <p>33 ms（Paxini 30 Hz）+ ROS/网络约 1 ms + 10 ms（PC 发送周期）+ 最多 10 ms（板子 WifiTask 每周期只收一个包）+ 1 ms（电机环）。瓶颈明确是指尖的 30 Hz，不在这条力学链上。</p>
+    </div>
+  </section>
+
+  <footer>
+    <span>公式取自 <code>motor_task.cpp:94–136</code> · <code>omni_hgi_haptic_teleop.py:174–192</code> · <code>paxini_2015_finger_node.py:191–201</code></span>
+    <span>SimpleFOC 2.2.1：设了 <code>phase_resistance</code> 时 <code>motor.move()</code> 的入参按电流（A）解释，<code>voltage.q = target × R</code></span>
+  </footer>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+// ---------------- model ----------------
+var DEF = {
+  ratio:1.0, fmax:5.0,
+  ffr:0.1, offset:0.2, logA:1.0, logB:0.6, clampMax:1.0,
+  contactTh:1.0, pacA:0.1, pacK:0.1,
+  R:8.8, vlim:6.0,
+  // DM3510 规格表。Rtrue 是每相电阻 = 相间 8.8 / 2 (星形绕组);
+  // R 上面那个是代码里 BLDCMotor(11, 8.8) 实际填的值, 两者故意分开。
+  Rtrue:4.4, kt:0.2, Inom:0.53, Istall:0.8
+};
+var P = Object.assign({}, DEF);
+var showRef = true, showPac = true, xmax = 10, probe = 2.0, tableOpen = true;
+
+function clamp(v,lo,hi){ return Math.max(lo, Math.min(hi, v)); }
+
+function chain(F, p){
+  var fz = Math.min(Math.round(F*10)/10, 25.5);          // 传感器 0.1 N 量化, 无符号
+  var z  = clamp(fz * p.ratio, -p.fmax, p.fmax);          // PC 侧增益 + 双向限幅
+  var contact = z > p.contactTh;
+  var amp = (showPac && contact) ? (p.pacA + p.pacK * z) : 0;
+  function fiOf(v){ return Math.max(p.ffr * (v + p.offset), 0); }
+  function cmdOf(v){ return clamp(p.logA * Math.log(1 + p.logB * v), 0, p.clampMax); }
+  function uqOf(c){ return Math.min(c * p.R, p.vlim); }
+  var fi = fiOf(z), fiHi = fiOf(z+amp), fiLo = fiOf(z-amp);
+  var cmd = cmdOf(fi), cmdHi = cmdOf(fiHi), cmdLo = cmdOf(fiLo);
+  var uq = uqOf(cmd), uqHi = uqOf(cmdHi), uqLo = uqOf(cmdLo);
+  var cur = uq / p.Rtrue;
+  return { fz:fz, z:z, fi:fi, fiHi:fiHi, fiLo:fiLo,
+           cmd:cmd, cmdHi:cmdHi, cmdLo:cmdLo,
+           uq:uq, uqHi:uqHi, uqLo:uqLo,
+           cur:cur, tq:cur * p.kt, contact:contact, amp:amp };
+}
+
+// ---------------- panel spec ----------------
+var PANELS = [
+  { no:"1", name:"传感器输出",       id:"Fz",              unit:"N", key:"fz",  band:null,            dec:2, cls:1, src:"芯片合力 · 0.1 N 量化" },
+  { no:"2", name:"PC 增益与限幅",     id:"/coil_command.z", unit:"N", key:"z",   band:null,            dec:2, cls:2, src:"clamp(Fz × ratio, ±max)" },
+  { no:"3", name:"线性预处理",        id:"force_input",     unit:"",  key:"fi",  band:["fiLo","fiHi"], dec:3, cls:3, src:"max(RATIO × (F + OFFSET), 0)" },
+  { no:"4", name:"对数压缩 → 名义电流", id:"motor_command",  unit:"A", key:"cmd", band:["cmdLo","cmdHi"],dec:3, cls:4, src:"clamp(A·ln(1 + B·x), 0, CLAMP_MAX)" },
+  { no:"5", name:"FOC q 轴电压",      id:"motor.voltage.q", unit:"V", key:"uq",  band:["uqLo","uqHi"], dec:2, cls:5, src:"min(cmd × R_phase, voltage_limit)" }
+];
+var LIMS = { z:function(){return P.fmax;}, cmd:function(){return P.clampMax;}, uq:function(){return P.vlim;} };
+// 电机自身的额定, 换算到 q 轴电压。规格表给的是电流, 而这一级画的是电压,
+// 所以标签同时写出两者 —— 读图的人关心的是"还能不能再拧", 那是电流的事。
+function ratings(key){
+  if(key !== "uq") return [];
+  return [
+    { v: P.Inom   * P.Rtrue, label: "额定电流 " + P.Inom + " A",   kind: "warn" },
+    { v: P.Istall * P.Rtrue, label: "堵转电流 " + P.Istall + " A", kind: "crit" }
+  ];
+}
+
+// ---------------- controls ----------------
+var CTRLS = {
+  grpPC:[
+    {k:"ratio", label:"knob_force_ratio", min:0, max:5,    step:0.05, dec:2, hint:"每牛顿法向力给旋钮的力，默认 1.0 即纯直通。"},
+    {k:"fmax",  label:"knob_force_max",   min:0.5, max:25.5, step:0.1, dec:1, hint:"真正决定最大手感的就是它。"}
+  ],
+  grpFW:[
+    {k:"ffr",       label:"FORCE_FEEDBACK_RATIO", min:0.01, max:1,  step:0.01, dec:2, hint:"进对数之前的线性增益。"},
+    {k:"offset",    label:"FORCE_OFFSET",         min:0,    max:2,  step:0.05, dec:2, hint:"静息偏置，让零力时也有一点点保持力矩。"},
+    {k:"logA",      label:"LOG_A",                min:0.1,  max:80, step:0.1,  dec:1, hint:"对数输出的整体缩放。"},
+    {k:"logB",      label:"LOG_B",                min:0.01, max:5,  step:0.01, dec:2, hint:"曲率：越小越接近线性。"},
+    {k:"clampMax",  label:"CLAMP_MAX",            min:0.05, max:1,  step:0.05, dec:2, hint:"默认参数下永远碰不到，见发现 01。"},
+    {k:"contactTh", label:"接触阈值 (N)",          min:0,    max:5,  step:0.1,  dec:1, hint:"isInContact 的上升沿门限，决定振动何时启动。"},
+    {k:"pacA",      label:"PACINIAN 基础幅值",      min:0,    max:1,  step:0.01, dec:2, hint:"振动包络的常数项。"},
+    {k:"pacK",      label:"PACINIAN 力比例",        min:0,    max:1,  step:0.01, dec:2, hint:"随力增长的部分。"}
+  ],
+  grpMotor:[
+    {k:"R",     label:"代码里的 phase_resistance", min:1, max:20, step:0.1, dec:1,
+     hint:"BLDCMotor(11, R) 实际填的值，只决定 Uq = motor_command × R。固件当前是 8.8。"},
+    {k:"Rtrue", label:"真实每相电阻 (Ω)", min:1, max:20, step:0.1, dec:1,
+     hint:"规格表相间 8.8 Ω ÷ 2（星形绕组）。决定这个 Uq 真正跑出多少电流。三角形绕组则应为 13.2。"},
+    {k:"vlim",  label:"voltage_limit (V)", min:0.5, max:12, step:0.1, dec:1,
+     hint:"供电 12 V。注意它不按电流限，见发现 06。"},
+    {k:"kt",    label:"torque_constant (N·m/A)", min:0.05, max:0.5, step:0.01, dec:2,
+     hint:"规格表 0.2 N·m/A。"}
+  ]
+};
+
+var PRESETS = [
+  { name:"固件默认", hint:"全部参数按固件与 launch 文件的当前默认值。", p:{} },
+  { name:"窄量程高分辨（建议）", hint:"把可用量程收到 0–3 N，让整条曲线铺开：1→3 N 段的 ΔUq 从 0.93 V 提到 1.47 V，而峰值电流 0.53 A 仍在额定连续值上，两头都比默认好。代价是超过 3 N 手感不再变化。",
+    p:{ratio:1, fmax:3, ffr:0.5, offset:0.0, logA:1.0, logB:0.20, vlim:2.4} },
+  { name:"近似线性", hint:"LOG_B 压到接近零、LOG_A 补回来，对数段退化成直线。同样的 0–5 N 量程和同样的电流上限下，1→3 N 的 ΔUq 也是 0.93 V —— 说明吃掉中段分辨力的不是对数压缩，是量程太宽。",
+    p:{ffr:0.1, offset:0.0, logA:53, logB:0.01, fmax:5, ratio:1, vlim:2.4} },
+  { name:"只抬 knob_force_max", hint:"其余不动，只把 PC 限幅放到满量程 25.5 N。曲线在 5 N 之后依旧很平，中段分辨力一点没变，峰值电流却冲到 1.36 A —— 额定的 2.6 倍。这是反例，别照抄。",
+    p:{fmax:25.5} }
+];
+
+// ---------------- geometry ----------------
+var ML = 62, MR = 104, PT = 15, PB = 11, PH = 84;
+var SVGH = PT + PH + PB;
+
+function niceMax(v){
+  if(!isFinite(v) || v <= 0) return 1;
+  var e = Math.pow(10, Math.floor(Math.log10(v)));
+  var m = v / e, ladder = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+  for(var i = 0; i < ladder.length; i++) if(m <= ladder[i] + 1e-9) return ladder[i] * e;
+  return 10 * e;
+}
+function fmt(v, d){
+  if(!isFinite(v)) return "—";
+  return v.toFixed(d);
+}
+function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+// ---------------- render: panels ----------------
+var plotwrap = document.getElementById("plotwrap");
+var axisstrip = document.getElementById("axisstrip");
+
+function sampleSeries(p, key, band){
+  var w = plotwrap.clientWidth || 800;
+  var PW = Math.max(120, w - ML - MR);
+  var n = Math.max(120, Math.round(PW / 2));
+  var xs = [], main = [], lo = [], hi = [];
+  for(var i = 0; i <= n; i++){
+    var F = xmax * i / n;
+    var r = chain(F, p);
+    xs.push(F); main.push(r[key]);
+    if(band){ lo.push(r[band[0]]); hi.push(r[band[1]]); }
+  }
+  return {xs:xs, main:main, lo:lo, hi:hi, PW:PW, w:w};
+}
+
+function drawPanels(){
+  var w = plotwrap.clientWidth || 800;
+  var PW = Math.max(120, w - ML - MR);
+  var probeR = chain(probe, P);
+  var refR = chain(probe, DEF);
+  var html = "";
+
+  PANELS.forEach(function(sp){
+    var s = sampleSeries(P, sp.key, showPac ? sp.band : null);
+    var ref = showRef ? sampleSeries(DEF, sp.key, null) : null;
+    if(ref){
+      var diff = 0;
+      for(var q = 0; q < ref.main.length; q++) diff = Math.max(diff, Math.abs(ref.main[q] - s.main[q]));
+      if(diff < 1e-9) ref = null;   // identical to the live curve - a ghost on top of it reads as a rendering fault
+    }
+
+    var peak = 0;
+    s.main.forEach(function(v){ if(v > peak) peak = v; });
+    if(showPac && sp.band) s.hi.forEach(function(v){ if(v > peak) peak = v; });
+    if(ref) ref.main.forEach(function(v){ if(v > peak) peak = v; });
+    var lim = LIMS[sp.key] ? LIMS[sp.key]() : null;
+    if(lim != null && lim <= peak * 2.4) peak = Math.max(peak, lim);
+    var rates = ratings(sp.key);
+    rates.forEach(function(r){ if(r.v <= peak * 2.4) peak = Math.max(peak, r.v); });
+    var ymax = niceMax(peak) || 1;
+
+    function X(F){ return ML + (F / xmax) * PW; }
+    function Y(v){ return PT + PH - clamp(v / ymax, 0, 1) * PH; }
+
+    function path(arr){
+      var d = "";
+      for(var i = 0; i < arr.length; i++) d += (i ? "L" : "M") + X(s.xs[i]).toFixed(1) + " " + Y(arr[i]).toFixed(1);
+      return d;
+    }
+
+    var g = "";
+    // grid
+    [0, 0.5, 1].forEach(function(f){
+      var y = PT + PH - f * PH;
+      g += '<line class="grid" x1="' + ML + '" y1="' + y + '" x2="' + (ML + PW) + '" y2="' + y + '"/>';
+    });
+    g += '<line class="axis" x1="' + ML + '" y1="' + PT + '" x2="' + ML + '" y2="' + (PT + PH) + '"/>';
+    // y ticks
+    g += '<text class="tick" x="' + (ML - 7) + '" y="' + (PT + PH + 3.5) + '" text-anchor="end">0</text>';
+    g += '<text class="tick" x="' + (ML - 7) + '" y="' + (PT + 4) + '" text-anchor="end">' + (ymax >= 10 ? ymax.toFixed(0) : ymax < 0.1 ? ymax.toFixed(3) : ymax.toFixed(ymax < 1 ? 2 : 1)) + '</text>';
+    if(sp.unit) g += '<text class="tick" x="' + (ML - 7) + '" y="' + (PT - 4) + '" text-anchor="end">' + esc(sp.unit) + '</text>';
+
+    // contact threshold marker (stages that carry the vibration)
+    if(showPac && sp.band && P.ratio > 0){
+      var Fc = P.contactTh / P.ratio;
+      if(Fc > 0 && Fc < xmax){
+        g += '<line class="contactline" x1="' + X(Fc).toFixed(1) + '" y1="' + PT + '" x2="' + X(Fc).toFixed(1) + '" y2="' + (PT + PH) + '"/>';
+        if(sp.no === "3") g += '<text class="reflab" x="' + (X(Fc) + 4).toFixed(1) + '" y="' + (PT + 9) + '">接触阈值</text>';
+      }
+    }
+
+    // reference lines: the software clamp, then the motor's own ratings.
+    // All right-anchored above their line, with a nudge so two close lines
+    // do not stack their labels on top of each other.
+    var placed = [];
+    function placeLabel(y){
+      var ly = y - 5;
+      for(var i = 0; i < placed.length; i++) if(Math.abs(ly - placed[i]) < 12) ly = placed[i] + 12;
+      placed.push(ly); return ly;
+    }
+    if(lim != null && lim <= ymax){
+      var yl = Y(lim);
+      g += '<line class="limline" x1="' + ML + '" y1="' + yl.toFixed(1) + '" x2="' + (ML + PW) + '" y2="' + yl.toFixed(1) + '"/>';
+      g += '<text class="limlab" text-anchor="end" x="' + (ML + PW - 6) + '" y="' + placeLabel(yl).toFixed(1) + '">▲ 限幅 ' + fmt(lim, sp.dec === 3 ? 2 : sp.dec) + (sp.unit ? " " + sp.unit : "") + '</text>';
+    }
+    rates.forEach(function(r){
+      if(r.v > ymax) return;
+      var yr = Y(r.v);
+      g += '<line class="ratline ' + r.kind + '" x1="' + ML + '" y1="' + yr.toFixed(1) + '" x2="' + (ML + PW) + '" y2="' + yr.toFixed(1) + '"/>';
+      g += '<text class="ratlab ' + r.kind + '" text-anchor="end" x="' + (ML + PW - 6) + '" y="' + placeLabel(yr).toFixed(1) + '">■ ' + esc(r.label) + ' = ' + fmt(r.v, 2) + ' V</text>';
+    });
+
+    // pacinian band
+    if(showPac && sp.band){
+      var d = "";
+      for(var i = 0; i < s.hi.length; i++) d += (i ? "L" : "M") + X(s.xs[i]).toFixed(1) + " " + Y(s.hi[i]).toFixed(1);
+      for(var j = s.lo.length - 1; j >= 0; j--) d += "L" + X(s.xs[j]).toFixed(1) + " " + Y(s.lo[j]).toFixed(1);
+      d += "Z";
+      g += '<path class="band f' + sp.cls + '" d="' + d + '"/>';
+    }
+
+    // reference curve
+    if(ref){
+      var dr = "";
+      for(var k = 0; k < ref.main.length; k++) dr += (k ? "L" : "M") + X(ref.xs[k]).toFixed(1) + " " + Y(ref.main[k]).toFixed(1);
+      g += '<path class="refcurve" d="' + dr + '"/>';
+      if(sp.no === "5") g += '<text class="reflab" x="' + (ML + PW - 4) + '" y="' + (PT + PH - 5) + '" text-anchor="end">虚线 = 固件默认</text>';
+    }
+
+    // main curve
+    g += '<path class="curve c' + sp.cls + '" d="' + path(s.main) + '"/>';
+
+    // crosshair + probe dot
+    var px = X(Math.min(probe, xmax));
+    if(probe <= xmax){
+      g += '<line class="crosshair" x1="' + px.toFixed(1) + '" y1="' + PT + '" x2="' + px.toFixed(1) + '" y2="' + (PT + PH) + '"/>';
+      g += '<circle class="dot f' + sp.cls + '" cx="' + px.toFixed(1) + '" cy="' + Y(probeR[sp.key]).toFixed(1) + '" r="4.5"/>';
+    }
+
+    // labels: stage identity (top-left, inside plot)
+    g += '<text class="stageno" x="' + (ML + 6) + '" y="' + (PT + 11) + '">' + sp.no + '</text>';
+    g += '<text class="stagename" x="' + (ML + 20) + '" y="' + (PT + 12) + '">' + esc(sp.name) + '</text>';
+    g += '<text class="stageid" x="' + (ML + 20) + '" y="' + (PT + 26) + '">' + esc(sp.id) + '</text>';
+
+    // gutter: probe readout (always visible — the tooltip never gates a value)
+    var gx = ML + PW + 12;
+    g += '<text class="probeval" x="' + gx + '" y="' + (PT + 20) + '">' + fmt(probeR[sp.key], sp.dec) + '</text>';
+    g += '<text class="probeunit" x="' + gx + '" y="' + (PT + 34) + '">' + (sp.unit ? esc(sp.unit) + " @ 探针" : "@ 探针") + '</text>';
+    var endV = chain(xmax, P)[sp.key];
+    g += '<text class="endlab" x="' + gx + '" y="' + (PT + PH - 2) + '">' + fmt(endV, sp.dec) + ' @ ' + xmax + 'N</text>';
+
+    html += '<div class="panel"><svg viewBox="0 0 ' + w + ' ' + SVGH + '" width="' + w + '" height="' + SVGH + '" role="img" aria-label="' +
+            esc(sp.no + " " + sp.name + " " + sp.id + "，探针处 " + fmt(probeR[sp.key], sp.dec) + " " + sp.unit) + '">' + g + '</svg></div>';
+  });
+
+  plotwrap.innerHTML = html;
+
+  // x axis strip
+  var ax = "";
+  ax += '<line class="axis" x1="' + ML + '" y1="1" x2="' + (ML + PW) + '" y2="1"/>';
+  var steps = xmax <= 5 ? 1 : xmax <= 10 ? 2 : 5;
+  for(var t = 0; t <= xmax + 1e-9; t += steps){
+    var x = ML + (t / xmax) * PW;
+    ax += '<line class="axis" x1="' + x.toFixed(1) + '" y1="1" x2="' + x.toFixed(1) + '" y2="5"/>';
+    ax += '<text class="tick" x="' + x.toFixed(1) + '" y="16" text-anchor="middle">' + t + '</text>';
+  }
+  ax += '<text class="tick" x="' + (ML + PW + 12) + '" y="16">指尖 Fz (N)</text>';
+  axisstrip.innerHTML = '<svg viewBox="0 0 ' + w + ' 24" width="' + w + '" height="24" aria-hidden="true">' + ax + '</svg>';
+}
+
+// ---------------- render: chain rail ----------------
+function drawChain(){
+  var r = chain(probe, P);
+  var vals = [r.fz, r.z, r.fi, r.cmd, r.uq];
+  var host = document.getElementById("chain");
+  host.innerHTML = "";
+  PANELS.forEach(function(sp, i){
+    if(i){
+      var a = document.createElement("span");
+      a.className = "arrow"; a.textContent = "→"; a.setAttribute("aria-hidden","true");
+      host.appendChild(a);
+    }
+    var d = document.createElement("div"); d.className = "chip";
+    var k = document.createElement("div"); k.className = "k";
+    var key = document.createElement("span"); key.className = "key b" + sp.cls; k.appendChild(key);
+    var no = document.createElement("span"); no.className = "no"; no.textContent = sp.no; k.appendChild(no);
+    var id = document.createElement("span"); id.className = "id"; id.textContent = sp.id; k.appendChild(id);
+    d.appendChild(k);
+    var v = document.createElement("div"); v.className = "v";
+    v.appendChild(document.createTextNode(fmt(vals[i], sp.dec)));
+    if(sp.unit){ var u = document.createElement("span"); u.className = "u"; u.textContent = sp.unit; v.appendChild(u); }
+    d.appendChild(v);
+    var n = document.createElement("div"); n.className = "n"; n.textContent = sp.src; d.appendChild(n);
+    host.appendChild(d);
+  });
+
+  var a2 = document.createElement("span");
+  a2.className = "arrow"; a2.textContent = "→"; a2.setAttribute("aria-hidden","true");
+  host.appendChild(a2);
+  var t = document.createElement("div"); t.className = "chip terminal";
+  var tk = document.createElement("div"); tk.className = "k";
+  var tkey = document.createElement("span"); tkey.className = "key"; tk.appendChild(tkey);
+  var tid = document.createElement("span"); tid.className = "id"; tid.textContent = "DM3510 输出力矩"; tk.appendChild(tid);
+  t.appendChild(tk);
+  var tv = document.createElement("div"); tv.className = "v" + (r.cur > P.Istall ? " over" : "");
+  tv.appendChild(document.createTextNode(r.tq.toFixed(3)));
+  var tu = document.createElement("span"); tu.className = "u"; tu.textContent = "N·m"; tv.appendChild(tu);
+  t.appendChild(tv);
+  var tn = document.createElement("div"); tn.className = "n";
+  tn.textContent = "Uq / R_phase × kt · 相电流 " + r.cur.toFixed(3) + " A";
+  t.appendChild(tn);
+  host.appendChild(t);
+}
+
+// ---------------- render: hero + tiles ----------------
+function drawHero(){
+  var r = chain(probe, P);
+  document.getElementById("probeVal").innerHTML = esc(probe.toFixed(2)) + '<span class="u">N</span>';
+  var pct = P.Inom > 0 ? (r.cur / P.Inom) * 100 : 0;
+  var hu = document.getElementById("heroUq");
+  hu.innerHTML = esc(fmt(r.uq, 2)) + '<span class="u">V</span>';
+  hu.classList.toggle("sat", r.uq >= P.vlim - 1e-9);
+  var hc = document.getElementById("heroCur");
+  hc.innerHTML = esc(fmt(r.cur, 3)) + '<span class="u">A</span>';
+  hc.classList.toggle("sat", r.cur > P.Istall);
+  document.getElementById("heroTq").innerHTML = esc(fmt(r.tq, 3)) + '<span class="u">N·m</span>';
+  var hp = document.getElementById("heroPct");
+  hp.innerHTML = esc(pct.toFixed(0)) + '<span class="u">%</span>';
+  hp.classList.toggle("sat", r.cur > P.Inom);
+}
+
+function drawTiles(){
+  var full = chain(25.5, P), idle = chain(0, P), a = chain(1, P), b = chain(3, P);
+  var dfull = chain(25.5, DEF), da = chain(1, DEF), db = chain(3, DEF);
+  var res = b.uq - a.uq, resDef = db.uq - da.uq;
+  var pct = P.vlim > 0 ? full.uq / P.vlim * 100 : 0;
+  var Fsat = P.ratio > 0 ? P.fmax / P.ratio : Infinity;
+
+  var iPct = P.Inom > 0 ? full.cur / P.Inom * 100 : 0;
+  var tiles = [
+    { cap:"满量程相电流", val:fmt(full.cur,2), u:"A",
+      sub: full.cur > P.Istall ? "超过堵转电流 " + P.Istall + " A" : full.cur > P.Inom ? "超过额定 " + P.Inom + " A，只可短时" : "在额定 " + P.Inom + " A 之内",
+      cls: full.cur > P.Istall ? "warnish" : full.cur > P.Inom ? "warnish" : "okish" },
+    { cap:"占额定电流", val:iPct.toFixed(0), u:"%", sub: iPct > 100 ? "持续运行会发热" : "可持续",
+      cls: iPct > 100 ? "warnish" : "okish" },
+    { cap:"满量程力矩", val:fmt(full.tq,3), u:"N·m", sub:"额定 0.11 · 堵转 0.16 N·m", cls:"" },
+    { cap:"满量程 Uq", val:fmt(full.uq,2), u:"V", sub:"固件默认 " + fmt(dfull.uq,2) + " V", cls:"" },
+    { cap:"1 → 3 N 分辨力", val:fmt(res,2), u:"ΔV", sub:"固件默认 " + fmt(resDef,2) + " V" + (res > resDef * 1.5 ? " · 已明显改善" : ""),
+      cls: res > resDef * 1.5 ? "okish" : "" },
+    { cap:"饱和点", val: isFinite(Fsat) ? (Fsat > 25.5 ? "25.5+" : fmt(Fsat,1)) : "—", u:"N", sub:"超过此力手感不再变化", cls:"" },
+    { cap:"静息 Uq", val:fmt(idle.uq,3), u:"V", sub: idle.uq > 0.3 ? "零力时仍有保持力矩" : "接近零", cls: idle.uq > 0.3 ? "warnish" : "" }
+  ];
+  var host = document.getElementById("tiles");
+  host.innerHTML = "";
+  tiles.forEach(function(t){
+    var d = document.createElement("div"); d.className = "tile";
+    var c = document.createElement("div"); c.className = "cap"; c.textContent = t.cap; d.appendChild(c);
+    var v = document.createElement("div"); v.className = "val";
+    v.appendChild(document.createTextNode(t.val));
+    var u = document.createElement("span"); u.className = "u"; u.textContent = t.u; v.appendChild(u);
+    d.appendChild(v);
+    var s = document.createElement("div"); s.className = "sub " + t.cls; s.textContent = t.sub; d.appendChild(s);
+    host.appendChild(d);
+  });
+}
+
+// ---------------- render: table ----------------
+var TROWS = [0, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 8, 10, 15, 20, 25.5];
+function drawTable(){
+  var host = document.getElementById("tablescroll");
+  host.innerHTML = "";
+  if(!tableOpen) return;
+  var t = document.createElement("table");
+  var head = ["Fz (N)", "/coil_command.z (N)", "force_input", "motor_command", "Uq (V)", "相电流 (A)", "力矩 (N·m)", "占额定"];
+  var thead = document.createElement("thead"); var tr = document.createElement("tr");
+  head.forEach(function(h){ var th = document.createElement("th"); th.textContent = h; tr.appendChild(th); });
+  thead.appendChild(tr); t.appendChild(thead);
+  var tb = document.createElement("tbody");
+  TROWS.forEach(function(F){
+    var r = chain(F, P);
+    var pct = P.Inom > 0 ? r.cur / P.Inom * 100 : 0;
+    var row = document.createElement("tr");
+    var cells = [F.toFixed(1), fmt(r.z,2), fmt(r.fi,3), fmt(r.cmd,3), fmt(r.uq,2),
+                 fmt(r.cur,3), fmt(r.tq,3), pct.toFixed(0) + "%"];
+    cells.forEach(function(c, i){
+      var td = document.createElement("td"); td.textContent = c;
+      if(i === 1 && Math.abs(r.z - P.fmax) < 1e-9) td.className = "sat";
+      if(i === 4 && r.uq >= P.vlim - 1e-9) td.className = "sat";
+      if((i === 5 || i === 7) && r.cur > P.Inom) td.className = "sat";
+      row.appendChild(td);
+    });
+    tb.appendChild(row);
+  });
+  t.appendChild(tb);
+  host.appendChild(t);
+}
+
+// ---------------- controls ----------------
+function buildControls(){
+  Object.keys(CTRLS).forEach(function(gid){
+    var host = document.getElementById(gid);
+    host.innerHTML = "";
+    CTRLS[gid].forEach(function(c){
+      var wrap = document.createElement("div"); wrap.className = "param";
+      var top = document.createElement("div"); top.className = "top";
+      var nm = document.createElement("span"); nm.className = "name"; nm.textContent = c.label;
+      var nu = document.createElement("span"); nu.className = "num"; nu.id = "num_" + c.k; nu.textContent = P[c.k].toFixed(c.dec);
+      top.appendChild(nm); top.appendChild(nu); wrap.appendChild(top);
+      var inp = document.createElement("input");
+      inp.type = "range"; inp.min = c.min; inp.max = c.max; inp.step = c.step; inp.value = P[c.k];
+      inp.id = "in_" + c.k; inp.setAttribute("aria-label", c.label);
+      inp.addEventListener("input", function(){ P[c.k] = parseFloat(inp.value); renderAll(); });
+      wrap.appendChild(inp);
+      var h = document.createElement("p"); h.className = "hint"; h.textContent = c.hint; wrap.appendChild(h);
+      host.appendChild(wrap);
+    });
+  });
+}
+function syncControls(){
+  Object.keys(CTRLS).forEach(function(gid){
+    CTRLS[gid].forEach(function(c){
+      var inp = document.getElementById("in_" + c.k);
+      var nu = document.getElementById("num_" + c.k);
+      if(inp) inp.value = P[c.k];
+      if(nu){
+        nu.textContent = P[c.k].toFixed(c.dec);
+        nu.classList.toggle("mod", Math.abs(P[c.k] - DEF[c.k]) > 1e-9);
+      }
+    });
+  });
+}
+
+function buildPresets(){
+  var host = document.getElementById("presets");
+  host.innerHTML = "";
+  PRESETS.forEach(function(pr, i){
+    var b = document.createElement("button");
+    b.type = "button"; b.textContent = pr.name;
+    b.setAttribute("aria-pressed", i === 0 ? "true" : "false");
+    b.addEventListener("click", function(){
+      P = Object.assign({}, DEF, pr.p);
+      document.getElementById("presetHint").textContent = pr.hint;
+      Array.prototype.forEach.call(host.children, function(el, j){ el.setAttribute("aria-pressed", j === i ? "true" : "false"); });
+      syncControls(); renderAll();
+    });
+    host.appendChild(b);
+  });
+}
+
+function buildXRanges(){
+  var host = document.getElementById("xranges");
+  host.innerHTML = "";
+  [5, 10, 25.5].forEach(function(v){
+    var b = document.createElement("button");
+    b.type = "button"; b.textContent = "0–" + v + " N";
+    b.setAttribute("aria-pressed", v === xmax ? "true" : "false");
+    b.addEventListener("click", function(){
+      xmax = v;
+      Array.prototype.forEach.call(host.children, function(el){ el.setAttribute("aria-pressed","false"); });
+      b.setAttribute("aria-pressed","true");
+      renderAll();
+    });
+    host.appendChild(b);
+  });
+}
+
+// ---------------- probe interaction ----------------
+var probeInput = document.getElementById("probe");
+probeInput.addEventListener("input", function(){ probe = parseFloat(probeInput.value); renderAll(); });
+
+function probeFromEvent(e){
+  var w = plotwrap.clientWidth || 800;
+  var PW = Math.max(120, w - ML - MR);
+  var rect = plotwrap.getBoundingClientRect();
+  var x = e.clientX - rect.left;
+  var F = ((x - ML) / PW) * xmax;
+  F = clamp(Math.round(F / 0.05) * 0.05, 0, 25.5);
+  probe = F; probeInput.value = F; renderAll();
+}
+var dragging = false;
+plotwrap.addEventListener("pointerdown", function(e){ dragging = true; plotwrap.setPointerCapture(e.pointerId); probeFromEvent(e); });
+plotwrap.addEventListener("pointermove", function(e){ if(dragging || e.pointerType === "mouse") probeFromEvent(e); });
+plotwrap.addEventListener("pointerup", function(e){ dragging = false; });
+plotwrap.addEventListener("pointercancel", function(){ dragging = false; });
+
+// ---------------- toggles ----------------
+document.getElementById("tRef").addEventListener("change", function(e){ showRef = e.target.checked; renderAll(); });
+document.getElementById("tPac").addEventListener("change", function(e){ showPac = e.target.checked; renderAll(); });
+var tableBtn = document.getElementById("tableBtn");
+tableBtn.addEventListener("click", function(){
+  tableOpen = !tableOpen;
+  tableBtn.textContent = tableOpen ? "收起" : "展开";
+  tableBtn.setAttribute("aria-pressed", tableOpen ? "true" : "false");
+  drawTable();
+});
+function legacyCopy(text){
+  try{
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly","");
+    ta.style.cssText = "position:fixed;top:0;left:-9999px;opacity:0";
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  }catch(err){ return false; }
+}
+document.getElementById("copyBtn").addEventListener("click", function(){
+  var txt =
+    "# PC 侧 (launch)\n" +
+    "ros2 launch wsg50_haptic_teleoperation_interface omni_hgi.launch.py \\\n" +
+    "    knob_force_ratio:=" + P.ratio + " knob_force_max:=" + P.fmax + "\n\n" +
+    "// ESP32 motor_task.cpp :: computeForceFeedback()\n" +
+    "constexpr float FORCE_FEEDBACK_RATIO = " + P.ffr + "f;\n" +
+    "constexpr float FORCE_OFFSET         = " + P.offset + "f;\n" +
+    "constexpr float LOG_A                = " + P.logA + "f;\n" +
+    "constexpr float LOG_B                = " + P.logB + "f;\n" +
+    "constexpr float CLAMP_MAX            = " + P.clampMax + "f;\n" +
+    "constexpr float MERKEL_TRIGGER_THRESHOLD = " + P.contactTh + "f;\n\n" +
+    "// 电机 DM3510: 相间 8.8 \u03a9, 每相 4.4 \u03a9, 额定 0.53 A, 堵转 0.8 A, kt 0.2 N\u00b7m/A\n" +
+    "BLDCMotor motor = BLDCMotor(11, " + P.R + ");   // SimpleFOC 要每相电阻; 规格表的 8.8 是相间值\n" +
+    "motor.voltage_limit = " + P.vlim + ";           // = " + (P.vlim / P.Rtrue).toFixed(2) + " A @ " + P.Rtrue + " \u03a9/相\n";
+  var btn = this;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(function(){
+      btn.textContent = "已复制";
+      setTimeout(function(){ btn.textContent = "复制当前参数"; }, 1600);
+    }, function(){ btn.textContent = "复制失败"; setTimeout(function(){ btn.textContent = "复制当前参数"; }, 1600); });
+  } else if(legacyCopy(txt)){
+    btn.textContent = "已复制";
+    setTimeout(function(){ btn.textContent = "复制当前参数"; }, 1600);
+  } else {
+    btn.textContent = "复制失败";
+    setTimeout(function(){ btn.textContent = "复制当前参数"; }, 1600);
+  }
+});
+
+// ---------------- go ----------------
+function renderAll(){ syncControls(); drawHero(); drawChain(); drawPanels(); drawTiles(); drawTable(); }
+buildControls(); buildPresets(); buildXRanges(); renderAll();
+
+var ro = new ResizeObserver(function(){ drawPanels(); });
+ro.observe(plotwrap);
+window.addEventListener("resize", drawPanels);
+})();
+</script>
+</body>
+</html>

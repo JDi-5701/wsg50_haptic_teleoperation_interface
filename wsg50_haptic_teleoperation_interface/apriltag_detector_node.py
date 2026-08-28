@@ -14,8 +14,11 @@ Topics
                 camera_info           (CameraInfo)       intrinsics
     publishes   tag_detections        (PoseArray)   every tag seen this frame
                 tag_<id>/pose         (PoseStamped) one per configured tag
-                tag_image             (CompressedImage) annotated, for eyeballing
+                tag_image/compressed  (CompressedImage) annotated, for eyeballing
                                                         (only with publish_debug_image)
+                tag_image             (Image) the same frame uncompressed, for a
+                                              machine with no compressed_image_transport
+                                              (only with publish_debug_raw)
     broadcasts  TF camera_frame -> tag_<id>
 
 Pose comes from solvePnP over the four corners against the known tag size, so
@@ -91,14 +94,114 @@ def rotation_matrix_to_quaternion(r):
     return x, y, z, w
 
 
+
+class OneEuroFilter:
+    """Speed-adaptive low-pass for a noisy pose stream (Casiez et al., CHI 2012).
+
+    A fixed low-pass forces one trade for every situation: enough smoothing to
+    settle a still marker is too much lag once it moves. This varies the cutoff
+    with the estimated speed - heavy filtering when slow, light when fast - which
+    is the trade an operator actually wants.
+
+    Measured on 25 s of hand-held marker poses recorded 2026-08-21, against the
+    unfiltered stream and a plain exponential filter:
+
+        none              jitter 1.01 mm   lag  5.18 mm
+        EMA tau 0.10      jitter 0.32 mm   lag 13.63 mm
+        1-euro 0.4 / 8    jitter 0.24 mm   lag  8.79 mm
+
+    Better on BOTH counts than the exponential filter, which is the whole point of
+    adapting. Jitter is roughness against the signal's own local trend and lag is
+    distance behind a zero-phase reference, measured separately - scored together
+    against one reference, a causal filter's lag masquerades as jitter and heavier
+    filtering looks noisier than lighter, which it is not.
+
+    Why it matters here: the raw pose jitters about 1 mm, and the teleoperation
+    node differentiates it to estimate the marker's velocity. Differentiating at
+    30 Hz turns 1 mm of jitter into 30 mm/s of velocity error, which then becomes
+    a commanded excursion. Filtering at the source fixes that for every consumer
+    rather than only for the one that differentiates.
+    """
+
+    def __init__(self, min_cutoff, beta, derivative_cutoff=1.0):
+        self.min_cutoff = float(min_cutoff)
+        self.beta = float(beta)
+        self.derivative_cutoff = float(derivative_cutoff)
+        self.prev = None
+        self.prev_stamp = None
+        self.derivative = None
+
+    @staticmethod
+    def _alpha(dt, cutoff):
+        tau = 1.0 / (2.0 * math.pi * cutoff)
+        return 1.0 / (1.0 + tau / dt)
+
+    def reset(self):
+        self.prev = None
+        self.prev_stamp = None
+        self.derivative = None
+
+    def __call__(self, value, stamp):
+        """value is a sequence of floats; stamp is seconds. Returns a list."""
+        value = [float(v) for v in value]
+        if self.prev is None or self.prev_stamp is None:
+            self.prev = value
+            self.prev_stamp = stamp
+            self.derivative = [0.0] * len(value)
+            return list(value)
+
+        dt = stamp - self.prev_stamp
+        # A repeated or out-of-order stamp would divide by ~zero and blow the
+        # derivative up; a long gap means the marker was lost and whatever the
+        # filter remembers is stale.
+        if dt <= 1e-4 or dt > 0.5:
+            self.reset()
+            self.prev = value
+            self.prev_stamp = stamp
+            self.derivative = [0.0] * len(value)
+            return list(value)
+
+        a_d = self._alpha(dt, self.derivative_cutoff)
+        speed = 0.0
+        for i, v in enumerate(value):
+            raw_derivative = (v - self.prev[i]) / dt
+            self.derivative[i] += a_d * (raw_derivative - self.derivative[i])
+            speed += self.derivative[i] ** 2
+        speed = math.sqrt(speed)
+
+        cutoff = self.min_cutoff + self.beta * speed
+        a = self._alpha(dt, cutoff)
+        out = [self.prev[i] + a * (value[i] - self.prev[i]) for i in range(len(value))]
+
+        self.prev = out
+        self.prev_stamp = stamp
+        return list(out)
+
+
 class AprilTagDetectorNode(Node):
     def __init__(self):
         super().__init__('apriltag_detector_node')
 
         self.declare_parameter('tag_family', '36h11')
-        self.declare_parameter('tag_size', 0.087)          # metres, outer black square
+        self.declare_parameter('tag_size', 0.032)          # metres, outer black square
         self.declare_parameter('use_compressed', True)
         self.declare_parameter('publish_debug_image', True)
+        # The annotated frame as raw bgr8 as well as jpeg. Off by default because
+        # raw over DDS is what caps the pipeline (1280x720 measured 3.8 Hz), but
+        # image_transport's compressed plugin is not installed on every machine
+        # and without it there is no way to look at tag_image at all.
+        self.declare_parameter('publish_debug_raw', False)
+        # Rate limit for that raw topic, in Hz. It is not optional: pushing every
+        # frame uncompressed measured 7 Hz at the detector against 30 Hz with the
+        # topic off, because the camera's frames queue behind the DDS writes.
+        # 5 Hz is smooth enough to aim a camera by and leaves detection at 30 Hz.
+        self.declare_parameter('debug_raw_rate', 5.0)
+        # Shrink the raw frame before publishing. The cost is linear in bytes
+        # and it is not the network - assigning the frame to the message's
+        # uint8[] field is 126 ms at 800x600 against a 0.04 ms memcpy and a
+        # 0.16 ms DDS write. Half size is 31 ms, which fits; full size at 5 Hz
+        # would spend 63% of every second inside one assignment.
+        self.declare_parameter('debug_raw_scale', 0.5)
         self.declare_parameter('publish_tf', True)
         self.declare_parameter('camera_frame', 'camera_optical_frame')
         # Reject a pose whose corners do not reproject onto themselves. A tag
@@ -138,6 +241,22 @@ class AprilTagDetectorNode(Node):
         # corners are quantised to whole pixels, so they simply do not move.
         # Same cost as subpix, worse corners.
         self.declare_parameter('corner_refinement', 'subpix')
+        # Speed-adaptive smoothing of the published pose. See OneEuroFilter above
+        # for the measurements; briefly, the raw pose jitters about 1 mm, and any
+        # consumer that differentiates it - the teleoperation node estimates the
+        # marker's velocity that way - turns that into 30 mm/s of velocity noise.
+        # Filtering here fixes it once for everything downstream.
+        #
+        # filter_min_cutoff is the cutoff in Hz while the marker is still: lower is
+        # steadier and laggier. filter_beta is how much the cutoff opens up with
+        # speed, in Hz per m/s - it is what keeps a fast movement from being
+        # smeared, and 0 turns the filter into a plain fixed low-pass.
+        #
+        # Set filter_min_cutoff to 0 to publish the raw pose, which is what every
+        # recording before 2026-08-21 contains.
+        self.declare_parameter('filter_min_cutoff', 0.4)
+        self.declare_parameter('filter_beta', 8.0)
+        self.declare_parameter('filter_derivative_cutoff', 1.0)
 
         family = self.get_parameter('tag_family').value
         if family not in FAMILIES:
@@ -156,6 +275,7 @@ class AprilTagDetectorNode(Node):
         self.tag_size = float(self.get_parameter('tag_size').value)
         self.camera_frame = self.get_parameter('camera_frame').value
         self.publish_debug = self.get_parameter('publish_debug_image').value
+        self.publish_debug_raw = self.get_parameter('publish_debug_raw').value
         self.max_reproj = float(self.get_parameter('max_reprojection_error').value)
 
         # Tag corners in the tag's own frame: origin at centre, Z out of the
@@ -167,6 +287,17 @@ class AprilTagDetectorNode(Node):
 
         self.camera_matrix = None
         self.dist_coeffs = None
+
+        self.filter_min_cutoff = float(self.get_parameter('filter_min_cutoff').value)
+        self.filter_beta = float(self.get_parameter('filter_beta').value)
+        self.filter_derivative_cutoff = float(
+            self.get_parameter('filter_derivative_cutoff').value)
+        # One filter per tag, built on first sight. Position and orientation are
+        # filtered separately: they have different units and different speeds, so
+        # one shared speed estimate would let a fast rotation open the cutoff on
+        # the translation and vice versa.
+        self.position_filters = {}
+        self.orientation_filters = {}
 
         def build_lut(g):
             if g <= 0 or g == 1.0:
@@ -180,7 +311,20 @@ class AprilTagDetectorNode(Node):
         self.fallback_hits = 0
 
         self.detections_pub = self.create_publisher(PoseArray, 'tag_detections', 10)
-        self.debug_pub = self.create_publisher(CompressedImage, 'tag_image', 1)
+        # image_transport's naming rule: the base topic is the Image, and each
+        # transport hangs off it as base/<transport>. Publishing a CompressedImage
+        # ON the base name is why rqt and rviz could not find this topic at all
+        # while they had no trouble with the camera's image_raw/compressed.
+        self.debug_pub = self.create_publisher(
+            CompressedImage, 'tag_image/compressed', 1)
+        self.debug_raw_pub = (
+            self.create_publisher(Image, 'tag_image', 1)
+            if self.publish_debug_raw else None)
+        rate = float(self.get_parameter('debug_raw_rate').value)
+        self.debug_raw_period = 1.0 / rate if rate > 0.0 else 0.0
+        self.debug_raw_last = 0.0
+        self.debug_raw_scale = float(self.get_parameter('debug_raw_scale').value)
+        self.debug_raw_ms = []
         self.tag_pose_pubs = {}
         self.tf_broadcaster = (
             TransformBroadcaster(self) if self.get_parameter('publish_tf').value
@@ -318,16 +462,76 @@ class AprilTagDetectorNode(Node):
                 msg.data = buf.tobytes()
                 self.debug_pub.publish(msg)
 
+            now = time.perf_counter()
+            if (self.debug_raw_pub is not None
+                    and now - self.debug_raw_last >= self.debug_raw_period):
+                self.debug_raw_last = now
+                small = debug
+                if 0.0 < self.debug_raw_scale < 1.0:
+                    small = cv2.resize(debug, None, fx=self.debug_raw_scale,
+                                       fy=self.debug_raw_scale,
+                                       interpolation=cv2.INTER_AREA)
+                raw = Image()
+                raw.header.stamp = header.stamp
+                raw.header.frame_id = self.camera_frame
+                raw.height, raw.width = small.shape[0], small.shape[1]
+                raw.encoding = 'bgr8'
+                raw.is_bigendian = 0
+                raw.step = small.shape[1] * 3
+                raw.data = small.tobytes()
+                self.debug_raw_pub.publish(raw)
+                self.debug_raw_ms.append((time.perf_counter() - now) * 1000.0)
+
+    def _filter_pose(self, tag_id, pose, stamp_seconds):
+        """Smooth one tag's pose. Returns (position, quaternion) as tuples."""
+        p = (pose.position.x, pose.position.y, pose.position.z)
+        q = (pose.orientation.x, pose.orientation.y, pose.orientation.z,
+             pose.orientation.w)
+        if self.filter_min_cutoff <= 0.0:
+            return p, q
+
+        if tag_id not in self.position_filters:
+            self.position_filters[tag_id] = OneEuroFilter(
+                self.filter_min_cutoff, self.filter_beta, self.filter_derivative_cutoff)
+            self.orientation_filters[tag_id] = OneEuroFilter(
+                self.filter_min_cutoff, self.filter_beta, self.filter_derivative_cutoff)
+
+        p = tuple(self.position_filters[tag_id](p, stamp_seconds))
+
+        # q and -q are the same rotation, and solvePnP is free to return either.
+        # Filtering the components straight through a sign flip would drag the
+        # quaternion through zero - a tumble, not the small rotation it really is -
+        # so align to the previous output first.
+        prev = self.orientation_filters[tag_id].prev
+        if prev is not None and sum(a * b for a, b in zip(q, prev)) < 0.0:
+            q = tuple(-v for v in q)
+        q = self.orientation_filters[tag_id](q, stamp_seconds)
+        norm = math.sqrt(sum(v * v for v in q))
+        if norm < 1e-9:
+            # Filtering four components independently does not preserve unit norm;
+            # this only happens if they cancel, which a sane stream cannot do, but
+            # a zero quaternion downstream is a silent disaster.
+            return p, (0.0, 0.0, 0.0, 1.0)
+        return p, tuple(v / norm for v in q)
+
     def _publish_tag(self, tag_id, pose, stamp):
         if tag_id not in self.tag_pose_pubs:
             self.tag_pose_pubs[tag_id] = self.create_publisher(
                 PoseStamped, f'tag_{tag_id}/pose', 10)
             self.get_logger().info(f'First sight of tag {tag_id}')
 
+        # Filter against the CAPTURE stamp, not arrival time: the filter's cutoff
+        # is a frequency, so it needs the interval over which the marker actually
+        # moved, and transport jitter is not part of that.
+        p, q = self._filter_pose(tag_id, pose,
+                                 stamp.sec + stamp.nanosec * 1e-9)
+
         ps = PoseStamped()
         ps.header.stamp = stamp
         ps.header.frame_id = self.camera_frame
-        ps.pose = pose
+        ps.pose.position.x, ps.pose.position.y, ps.pose.position.z = p
+        (ps.pose.orientation.x, ps.pose.orientation.y,
+         ps.pose.orientation.z, ps.pose.orientation.w) = q
         self.tag_pose_pubs[tag_id].publish(ps)
 
         if self.tf_broadcaster is not None:
@@ -335,10 +539,10 @@ class AprilTagDetectorNode(Node):
             tf.header.stamp = stamp
             tf.header.frame_id = self.camera_frame
             tf.child_frame_id = f'tag_{tag_id}'
-            tf.transform.translation.x = pose.position.x
-            tf.transform.translation.y = pose.position.y
-            tf.transform.translation.z = pose.position.z
-            tf.transform.rotation = pose.orientation
+            tf.transform.translation.x = p[0]
+            tf.transform.translation.y = p[1]
+            tf.transform.translation.z = p[2]
+            tf.transform.rotation = ps.pose.orientation
             self.tf_broadcaster.sendTransform(tf)
 
     def report(self):
@@ -356,6 +560,11 @@ class AprilTagDetectorNode(Node):
             ms = sorted(self.proc_ms)
             note += (f', {ms[len(ms)//2]:.1f} ms/frame median, '
                      f'{ms[int(len(ms)*0.95)]:.1f} ms p95')
+        if self.debug_raw_ms:
+            r = sorted(self.debug_raw_ms)
+            note += (f', tag_image_raw {len(r)} pub, '
+                     f'{r[len(r)//2]:.1f} ms median, {r[-1]:.1f} ms max')
+            self.debug_raw_ms = []
         self.get_logger().info(
             f'{self.frames} frames, {self.hits} tag sightings{note} (last 5 s)')
         self.frames = self.hits = self.rejected = self.fallback_hits = 0

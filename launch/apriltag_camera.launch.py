@@ -4,6 +4,10 @@
              |
     apriltag_detector_node   -> tag_detections, tag_<id>/pose, TF, tag_image
 
+Both run in the `namespace` argument's namespace, /webcam by default, so the
+topics are /webcam/image_raw/compressed and so on. TF frames are not
+namespaced.
+
 Defaults to 640x480 with the raw image topic off: capture and JPEG encode both
 sustain 30 Hz, but pushing raw bgr8 frames through DDS does not (1280x720
 measured 3.8 Hz end to end). The detector reads the compressed topic.
@@ -18,8 +22,8 @@ Usage:
     ros2 launch ... apriltag_camera.launch.py camera_info_url:=~/camera_640x480.yaml
 
 Check it is working:
-    ros2 topic echo /tag_0/pose
-    ros2 topic hz /tag_detections
+    ros2 topic echo /webcam/tag_0/pose
+    ros2 topic hz /webcam/tag_detections
 """
 
 from launch import LaunchDescription
@@ -30,6 +34,13 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'namespace', default_value='webcam',
+            description='Everything this launch publishes lands under it: '
+                        '/webcam/image_raw, /webcam/camera_info, '
+                        '/webcam/tag_image, /webcam/tag_0/pose. TF frame '
+                        'names are NOT namespaced, so the teleop node, which '
+                        'reads the marker over TF, is unaffected.'),
         DeclareLaunchArgument('device_id', default_value='0',
                               description='/dev/videoN'),
         DeclareLaunchArgument('width', default_value='800'),
@@ -60,11 +71,40 @@ def generate_launch_description():
             description='Vertical, not horizontal: this sensor keeps the '
                         'vertical field and crops horizontally for 4:3 modes.'),
         DeclareLaunchArgument('tag_family', default_value='36h11'),
-        DeclareLaunchArgument('tag_size', default_value='0.087',
+        DeclareLaunchArgument('tag_size', default_value='0.032',
                               description='metres, outer edge of the black square'),
         DeclareLaunchArgument('camera_frame', default_value='camera_optical_frame'),
         DeclareLaunchArgument('publish_debug_image', default_value='true',
                               description='Annotated jpeg on tag_image'),
+        DeclareLaunchArgument(
+            'publish_debug_raw', default_value='false',
+            description='Also publish the annotated frame uncompressed on '
+                        'tag_image_raw. Needed on a machine without '
+                        'compressed_image_transport, which cannot subscribe to '
+                        'tag_image at all. Costs bandwidth - turn it off again '
+                        'once you have looked.'),
+        DeclareLaunchArgument(
+            'debug_raw_rate', default_value='5.0',
+            description='Hz cap on tag_image_raw. Publishing every frame '
+                        'uncompressed drops detection from 30 Hz to 7; at '
+                        '5 Hz detection measured a full 30 Hz with a viewer '
+                        'attached.'),
+        DeclareLaunchArgument(
+            'debug_raw_scale', default_value='0.5',
+            description='Shrink tag_image_raw by this factor. Cost is linear '
+                        'in bytes and lives in rclpy, not the network: 126 ms '
+                        'per publish at 1.0, 31 ms at 0.5, 8 ms at 0.25.'),
+        DeclareLaunchArgument(
+            'filter_min_cutoff', default_value='0.4',
+            description="Hz. Cutoff of the pose filter while the marker is still - "
+                        "lower is steadier and laggier. 0 publishes the raw pose, "
+                        "which jitters about 1 mm and is what recordings before "
+                        "2026-08-21 contain."),
+        DeclareLaunchArgument(
+            'filter_beta', default_value='8.0',
+            description="Hz per m/s. How much the cutoff opens up with speed, which "
+                        "is what stops a fast movement being smeared. 0 makes it a "
+                        "plain fixed low-pass."),
         DeclareLaunchArgument(
             'corner_refinement', default_value='subpix',
             description="subpix | apriltag | none. apriltag refines better but "
@@ -76,6 +116,7 @@ def generate_launch_description():
             package='wsg50_haptic_teleoperation_interface',
             executable='usb_camera_node.py',
             name='usb_camera_node',
+            namespace=LaunchConfiguration('namespace'),
             output='screen',
             parameters=[{
                 'device_id': LaunchConfiguration('device_id'),
@@ -96,13 +137,19 @@ def generate_launch_description():
             package='wsg50_haptic_teleoperation_interface',
             executable='apriltag_detector_node.py',
             name='apriltag_detector_node',
+            namespace=LaunchConfiguration('namespace'),
             output='screen',
             parameters=[{
                 'tag_family': LaunchConfiguration('tag_family'),
                 'tag_size': LaunchConfiguration('tag_size'),
                 'use_compressed': True,
                 'publish_debug_image': LaunchConfiguration('publish_debug_image'),
+                'publish_debug_raw': LaunchConfiguration('publish_debug_raw'),
+                'debug_raw_rate': LaunchConfiguration('debug_raw_rate'),
+                'debug_raw_scale': LaunchConfiguration('debug_raw_scale'),
                 'corner_refinement': LaunchConfiguration('corner_refinement'),
+                'filter_min_cutoff': LaunchConfiguration('filter_min_cutoff'),
+                'filter_beta': LaunchConfiguration('filter_beta'),
                 'publish_tf': True,
                 'camera_frame': LaunchConfiguration('camera_frame'),
             }],

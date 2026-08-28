@@ -59,7 +59,7 @@ def generate_launch_description():
         DeclareLaunchArgument('use_camera', default_value='true',
                               description='Also start the camera and detector'),
         DeclareLaunchArgument(
-            'tag_size', default_value='0.087',
+            'tag_size', default_value='0.032',
             description='Marker size in metres, outer edge of the black square'),
         DeclareLaunchArgument(
             'tag_frame', default_value='tag_aligned',
@@ -98,11 +98,11 @@ def generate_launch_description():
         DeclareLaunchArgument('camera_frame', default_value='camera_optical_frame',
                               description='Frame the tag pose is reported in'),
         DeclareLaunchArgument(
-            'position_scale', default_value='0.2',
+            'position_scale', default_value='0.8',
             description='Fraction of the marker motion the robot takes. 1.0 is '
                         'the UR behaviour.'),
         DeclareLaunchArgument(
-            'orientation_scale', default_value='0.2',
+            'orientation_scale', default_value='0.4',
             description='Fraction of the marker rotation the robot takes. '
                         'Scaled by angle about the same axis, not by '
                         'multiplying the quaternion.'),
@@ -111,8 +111,37 @@ def generate_launch_description():
             description='Skip a frame whose marker jumps further than this, in '
                         'metres. Stays inside the relay 0.15 m limit.'),
         DeclareLaunchArgument(
-            'max_delta_angle', default_value='0.30',
+            'max_delta_angle', default_value='0.70',
             description='Same, in radians. Relay limit is 0.50.'),
+
+        # Camera and detector settings. These are only re-declared so they can be
+        # forwarded: every default lives in apriltag_camera.launch.py, and an
+        # empty string here means "leave that launch file's default alone".
+        # Before this existed the include passed only tag_size and camera_frame,
+        # so exposure:=50 and friends were accepted on the command line and then
+        # silently dropped.
+        DeclareLaunchArgument('namespace', default_value='webcam',
+                              description='Namespace for the camera and '
+                                          'detector topics.'),
+        DeclareLaunchArgument('device_id', default_value='0'),
+        DeclareLaunchArgument('width', default_value='800'),
+        DeclareLaunchArgument('height', default_value='600'),
+        DeclareLaunchArgument('fps', default_value='30.0'),
+        DeclareLaunchArgument('auto_exposure', default_value='false'),
+        DeclareLaunchArgument('exposure', default_value='50',
+                              description='Units of 100 us. See apriltag_camera.'),
+        DeclareLaunchArgument('corner_refinement', default_value='subpix'),
+        DeclareLaunchArgument('filter_min_cutoff', default_value='0.4'),
+        DeclareLaunchArgument('filter_beta', default_value='8.0'),
+        DeclareLaunchArgument('publish_debug_image', default_value='true'),
+        DeclareLaunchArgument(
+            'publish_debug_raw', default_value='false',
+            description='Annotated frame uncompressed on tag_image_raw, for a '
+                        'machine that cannot subscribe to the compressed one.'),
+        DeclareLaunchArgument('debug_raw_rate', default_value='5.0',
+                              description='Hz cap on tag_image_raw.'),
+        DeclareLaunchArgument('debug_raw_scale', default_value='0.5',
+                              description='Shrink tag_image_raw by this factor.'),
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -121,6 +150,20 @@ def generate_launch_description():
             launch_arguments={
                 'tag_size': LaunchConfiguration('tag_size'),
                 'camera_frame': LaunchConfiguration('camera_frame'),
+                'namespace': LaunchConfiguration('namespace'),
+                'device_id': LaunchConfiguration('device_id'),
+                'width': LaunchConfiguration('width'),
+                'height': LaunchConfiguration('height'),
+                'fps': LaunchConfiguration('fps'),
+                'auto_exposure': LaunchConfiguration('auto_exposure'),
+                'exposure': LaunchConfiguration('exposure'),
+                'corner_refinement': LaunchConfiguration('corner_refinement'),
+                'filter_min_cutoff': LaunchConfiguration('filter_min_cutoff'),
+                'filter_beta': LaunchConfiguration('filter_beta'),
+                'publish_debug_image': LaunchConfiguration('publish_debug_image'),
+                'publish_debug_raw': LaunchConfiguration('publish_debug_raw'),
+                'debug_raw_rate': LaunchConfiguration('debug_raw_rate'),
+                'debug_raw_scale': LaunchConfiguration('debug_raw_scale'),
             }.items(),
         ),
 

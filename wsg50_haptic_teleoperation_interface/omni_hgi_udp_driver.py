@@ -84,6 +84,8 @@ class OmniHgiUdpDriver(Node):
         self.declare_parameter('publish_rate', 0.0)
 
         self.declare_parameter('command_timeout', 0.5)
+        # Seconds between link-quality reports. 0 turns them off.
+        self.declare_parameter('report_period', 2.0)
 
         self.esp32_address = (
             self.get_parameter('esp32_address').value,
@@ -120,24 +122,118 @@ class OmniHgiUdpDriver(Node):
         self.timed_out = True                  # nothing received yet
 
         self.last_publish_time = 0.0
-        self.rx_count = 0
-        self.lost_count = 0
+        # Monotonic totals, never reset. The report timer runs on the executor
+        # thread while these are written by the RX thread, so it takes
+        # differences against its own previous snapshot rather than zeroing
+        # them - a reset from the other thread would lose whatever arrived
+        # between the read and the write.
+        self.rx_total = 0
+        self.lost_total = 0
+        self.tx_total = 0
+        self.late_total = 0        # inter-arrival gaps beyond LATE_FACTOR
+        self.prev_snapshot = (0, 0, 0, 0)
+        self.gap_max = 0.0         # worst inter-arrival in the window, seconds
+        self.prev_rx_time = None
         self.last_msg_id = None
-        self.last_rate_log = time.time()
         self.last_rx_time = time.time()
         self.rx_stalled = False
         self.send_errors = 0
         self.last_send_error_log = 0.0
 
+        # An arrival is "late" once it is this many periods behind the one
+        # before it. The reference has to be the rate the board actually SENDS
+        # at, which is its own and is not the TX rate the PC uses: measured on
+        # hardware the board sent 72 Hz while the PC sent 100, and judging the
+        # incoming stream against the outgoing 10 ms period called ordinary
+        # 14 ms spacing late. So it is measured, and seeded from tx_rate only
+        # until the first window has been observed.
+        #
+        # Set before the RX thread starts: that thread reads late_threshold on
+        # its very first packet, which can arrive before this constructor
+        # returns.
+        tx_rate = self.get_parameter('tx_rate').value
+        self.report_period = float(self.get_parameter('report_period').value)
+        self.nominal_rx_period = 1.0 / tx_rate
+        self.rx_period_measured = False
+        self.late_threshold = 2.5 * self.nominal_rx_period
+        self.last_report = time.time()
+
         self.running = True
         self.rx_thread = threading.Thread(target=self.rx_loop, daemon=True)
         self.rx_thread.start()
 
-        tx_rate = self.get_parameter('tx_rate').value
         self.create_timer(1.0 / tx_rate, self.tx_loop)
+        if self.report_period > 0.0:
+            self.create_timer(self.report_period, self.report_link)
+
         self.get_logger().info(
             f'OmniHGI UDP driver up: TX {tx_rate:.0f} Hz -> '
             f'{self.esp32_address[0]}:{self.esp32_address[1]}')
+
+    def report_link(self):
+        """How the ESP32 link behaved over the last window.
+
+        Reported from a timer rather than from the RX handler, so that a link
+        that has gone completely silent says so instead of simply ceasing to
+        log - which is what the old rate line did, and it read as if nothing
+        were wrong.
+        """
+        now = time.time()
+        elapsed = now - self.last_report
+        self.last_report = now
+        if elapsed <= 0.0:
+            return
+
+        rx, lost, tx, late = (self.rx_total, self.lost_total,
+                              self.tx_total, self.late_total)
+        p_rx, p_lost, p_tx, p_late = self.prev_snapshot
+        self.prev_snapshot = (rx, lost, tx, late)
+        d_rx, d_lost, d_tx, d_late = rx - p_rx, lost - p_lost, tx - p_tx, late - p_late
+        gap_max = self.gap_max
+        self.gap_max = 0.0
+
+        rx_hz, tx_hz = d_rx / elapsed, d_tx / elapsed
+        expected = d_rx + d_lost
+        loss_pct = (100.0 * d_lost / expected) if expected else 0.0
+
+        # Re-reference the lateness test to what the board is actually doing.
+        # Uses the packets the board sent, not the ones that arrived, so a
+        # window that lost half of them does not halve the expected rate and
+        # then call the surviving packets punctual.
+        if expected > 1:
+            self.nominal_rx_period = elapsed / expected
+            self.late_threshold = 2.5 * self.nominal_rx_period
+            self.rx_period_measured = True
+
+        if d_rx == 0:
+            self.get_logger().error(
+                f'ESP32 link: RX 0.0 Hz - NOTHING RECEIVED in {elapsed:.1f} s '
+                f'(TX {tx_hz:.0f} Hz still going out)')
+            return
+
+        # Steady means every packet arrived and none of them arrived late. Both
+        # halves matter: a stream can lose nothing and still stutter, and it can
+        # keep perfect spacing while dropping every other packet.
+        if d_lost == 0 and d_late == 0:
+            verdict = 'STEADY'
+        elif d_lost == 0:
+            verdict = f'JITTERY ({d_late} late)'
+        else:
+            verdict = f'LOSSY ({d_lost} lost, {loss_pct:.1f}%'
+            verdict += f', {d_late} late)' if d_late else ')'
+
+        line = (f'ESP32 link {verdict}: RX {rx_hz:5.1f} Hz  TX {tx_hz:5.1f} Hz  '
+                f'worst gap {gap_max * 1000:.0f} ms '
+                f'(board sends every {self.nominal_rx_period * 1000:.0f} ms'
+                f'{"" if self.rx_period_measured else ", assumed"})')
+
+        # One severity per call site: rclpy identifies a logger call by its
+        # file and line, and raises "Logger severity cannot be changed between
+        # calls" if the same line logs at INFO once and WARN the next time.
+        if verdict == 'STEADY':
+            self.get_logger().info(line)
+        else:
+            self.get_logger().warn(line)
 
     # ---------------- PC -> ESP32 ----------------
     def command_callback(self, msg):
@@ -161,6 +257,7 @@ class OmniHgiUdpDriver(Node):
             self.tx_sock.sendto(
                 struct.pack(FORCE_MSG_3D_FORMAT, float(x), float(y), float(z)),
                 self.esp32_address)
+            self.tx_total += 1
             self.send_errors = 0
         except OSError as e:
             # Throttled: an unreachable board fails every tx period, and at
@@ -204,25 +301,27 @@ class OmniHgiUdpDriver(Node):
             if self.last_msg_id is not None:
                 gap = msg_id - self.last_msg_id
                 if gap > 1:
-                    self.lost_count += gap - 1
+                    self.lost_total += gap - 1
                 elif gap <= 0:
                     self.get_logger().warn(
                         f'Sequence went backwards ({self.last_msg_id} -> '
                         f'{msg_id}); board restarted?')
-                    self.lost_count = 0
             self.last_msg_id = msg_id
 
-            self.rx_count += 1
+            self.rx_total += 1
             now = time.time()
-            if now - self.last_rate_log >= 1.0:
-                if self.lost_count:
-                    self.get_logger().warn(
-                        f'RX {self.rx_count} packets/s, {self.lost_count} lost')
-                else:
-                    self.get_logger().info(f'RX {self.rx_count} packets/s')
-                self.rx_count = 0
-                self.lost_count = 0
-                self.last_rate_log = now
+
+            # Rate alone cannot tell a steady stream from a bursty one: 100
+            # packets in a second arriving as one clump every 10 ms and as a
+            # 500 ms silence followed by a burst both read as 100 Hz. The
+            # spacing between arrivals is what separates them.
+            if self.prev_rx_time is not None:
+                gap = now - self.prev_rx_time
+                if gap > self.gap_max:
+                    self.gap_max = gap
+                if gap > self.late_threshold:
+                    self.late_total += 1
+            self.prev_rx_time = now
 
             if self.min_publish_interval:
                 if now - self.last_publish_time < self.min_publish_interval:
